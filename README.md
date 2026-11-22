@@ -28,19 +28,11 @@ select set_config('request.jwt.claims','{"role":"service_role"}',false);
 update dorly_profiles set role = 'admin' where phone = '01XXXXXXXXX';
 ```
 
-### E-mail verification codes (Brevo)
+### Sign-up verification (currently off)
 
-Sign-up and password reset send a 6-digit code by e-mail through the `dorly-otp` Edge Function. Codes expire after 10 minutes and allow 5 tries; each address can request 5 codes per hour. Sign-up refuses any e-mail address that wasn't verified this way. The phone number is still collected for contact, but it isn't verified.
-
-Set two secrets in Supabase under **Edge Functions → Secrets**:
-
-| Secret | Value |
-|---|---|
-| `BREVO_API_KEY` | Brevo → SMTP & API → API Keys → Generate a new API key |
-| `DORLY_MAIL_FROM` | The sender address you verified in Brevo → Senders (e.g. your Gmail) |
-
-Until they are set, sign-up and password reset show "خدمة الإيميل مش متاحة دلوقتي".
+Sign-up creates the account right away, with no SMS or e-mail code. The `dorly-otp` Edge Function, which e-mails codes through Brevo's free plan, is ready for later. To turn verification back on: set `BREVO_API_KEY` and `DORLY_MAIL_FROM` in Supabase **Edge Functions → Secrets**, add the `otp` step back to `RSTEPS` in `dorly.html`, and require the token again in `dorly-signup`. Git history has that version (commit "Verify accounts by e-mail code").
 
 ### Known limits
 
+- Phone numbers and e-mails are not verified, and password reset goes through the team.
 - Verification documents (ID, commercial register) are recorded by file name only and are not uploaded yet.

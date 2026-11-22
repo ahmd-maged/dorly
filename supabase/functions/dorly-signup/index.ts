@@ -1,9 +1,8 @@
 // Dorly sign-up: creates the auth user, profile and (for sellers) the seller record with the service role,
 // so browsers can never pick their own role, badges or another user's data.
-// Deployed with verify_jwt = false (anonymous visitors sign up); all input is validated here,
-// and the e-mail address must carry a signed proof of verification from dorly-otp.
+// Deployed with verify_jwt = false (anonymous visitors sign up); all input is validated here.
+// No phone/e-mail verification for now (no SMS or e-mail service connected); dorly-otp can be re-enabled later.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
-import { readToken } from "./token.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -42,10 +41,7 @@ Deno.serve(async (req) => {
   if (!["customer", "individual", "merchant"].includes(role)) return json({ error: "role" }, 400);
   if (name.split(/\s+/).length < 2) return json({ error: "name" }, 400);
   if (!okPhone(phone)) return json({ error: "phone" }, 400);
-  if (!okMail(email)) return json({ error: "email" }, 400);
-  // the e-mail must have been verified with a code (dorly-otp) within the last 30 minutes
-  const otp = await readToken(String(b.otpToken || ""));
-  if (!otp || otp.sub !== email || otp.purpose !== "signup") return json({ error: "otp" }, 400);
+  if (email && !okMail(email)) return json({ error: "email" }, 400);
   if (password.length < 8 || password.length > 72 || !/\d/.test(password) || !/[A-Za-z؀-ۿ]/.test(password)) return json({ error: "password" }, 400);
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
@@ -71,7 +67,7 @@ Deno.serve(async (req) => {
       for (const k of PRIVATE_KEYS) priv[k] = str(p[k]);
       const sName = str(s.name, 80) || name;
       const city = (pub.area ? pub.area + " – " : "") + pub.gov;
-      const seller = { id: sellerId, name: sName, type: role, city, badges: ["email"], since: String(new Date().getFullYear()), profile: pub };
+      const seller = { id: sellerId, name: sName, type: role, city, badges: [], since: String(new Date().getFullYear()), profile: pub };
       let r = await admin.from("dorly_sellers").insert({ id: sellerId, owner: uid, sample: false, data: seller });
       if (r.error) throw r.error;
       r = await admin.from("dorly_seller_private").insert({ seller_id: sellerId, owner: uid, data: priv });
