@@ -28,17 +28,18 @@ select set_config('request.jwt.claims','{"role":"service_role"}',false);
 update dorly_profiles set role = 'admin' where phone = '01XXXXXXXXX';
 ```
 
-### SMS codes (Twilio Verify)
+### E-mail verification codes (Brevo)
 
-Sign-up and password reset send a real SMS code through the `dorly-otp` Edge Function. Sign-up refuses any phone number that wasn't verified this way. The function needs three secrets, set in Supabase under **Edge Functions → Secrets**:
+Sign-up and password reset send a 6-digit code by e-mail through the `dorly-otp` Edge Function. Codes expire after 10 minutes and allow 5 tries; each address can request 5 codes per hour. Sign-up refuses any e-mail address that wasn't verified this way. The phone number is still collected for contact, but it isn't verified.
 
-| Secret | Where to find it |
+Set two secrets in Supabase under **Edge Functions → Secrets**:
+
+| Secret | Value |
 |---|---|
-| `TWILIO_ACCOUNT_SID` | Twilio Console home page ("Account SID") |
-| `TWILIO_AUTH_TOKEN` | Twilio Console home page ("Auth Token") |
-| `TWILIO_VERIFY_SID` | Twilio Console → Verify → Services → your service ("Service SID", starts with `VA`) |
+| `BREVO_API_KEY` | Brevo → SMTP & API → API Keys → Generate a new API key |
+| `DORLY_MAIL_FROM` | The sender address you verified in Brevo → Senders (e.g. your Gmail) |
 
-Until they are set, sign-up and password reset show "خدمة الرسايل مش متاحة دلوقتي".
+Until they are set, sign-up and password reset show "خدمة الإيميل مش متاحة دلوقتي".
 
 ### Known limits
 

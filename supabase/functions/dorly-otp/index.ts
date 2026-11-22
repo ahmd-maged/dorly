@@ -1,10 +1,10 @@
-// Dorly phone verification through Twilio Verify.
-//   {action:"send",  phone, purpose:"signup"|"reset"}          -> sends an SMS code
-//   {action:"check", phone, code, purpose}                       -> returns a short-lived signed token
-//   {action:"reset", phone, token, password}                     -> sets a new password (needs a "reset" token)
-// Secrets (Supabase > Edge Functions > Secrets): TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SID
+// Dorly e-mail verification codes (sent with Brevo).
+//   {action:"send",  email, purpose:"signup"|"reset"}   -> e-mails a 6-digit code (valid 10 minutes)
+//   {action:"check", email, code, purpose}              -> returns a signed 30-minute proof token
+//   {action:"reset", email, token, password}            -> sets a new password (needs a "reset" token)
+// Secrets (Supabase > Edge Functions > Secrets): BREVO_API_KEY, DORLY_MAIL_FROM (the sender address verified in Brevo)
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
-import { makeToken, readToken } from "./token.ts";
+import { makeToken, readToken, sha256 } from "./token.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -13,30 +13,33 @@ const CORS = {
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
-
 const toEn = (s: string) => String(s).replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 1632)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 1776));
-function normPhone(s: string) {
-  s = toEn(s || "").replace(/[\s\-()]/g, "");
-  if (s.startsWith("+20")) s = "0" + s.slice(3);
-  else if (s.startsWith("0020")) s = "0" + s.slice(4);
-  else if (/^20\d{10}$/.test(s)) s = "0" + s.slice(2);
-  return s;
+const okMail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s) && s.length <= 120;
+
+const BREVO = Deno.env.get("BREVO_API_KEY") || "";
+const FROM = Deno.env.get("DORLY_MAIL_FROM") || "";
+const PEPPER = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const MAX_SENDS_PER_HOUR = 5, MAX_TRIES = 5, CODE_MINUTES = 10;
+
+const codeHash = (email: string, purpose: string, code: string) => sha256(`${PEPPER}|${email}|${purpose}|${code}`);
+function newCode() {
+  const n = crypto.getRandomValues(new Uint32Array(1))[0] % 1000000;
+  return String(n).padStart(6, "0");
 }
-const okPhone = (s: string) => /^01[0125]\d{8}$/.test(s);
-const e164 = (p: string) => "+20" + p.slice(1);
-
-const SID = Deno.env.get("TWILIO_ACCOUNT_SID") || "";
-const TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN") || "";
-const VSID = Deno.env.get("TWILIO_VERIFY_SID") || "";
-
-async function twilio(path: string, form: Record<string, string>) {
-  const r = await fetch(`https://verify.twilio.com/v2/Services/${VSID}/${path}`, {
+async function sendMail(to: string, code: string, purpose: string) {
+  const title = purpose === "reset" ? "كود تغيير كلمة السر" : "كود تأكيد حسابك";
+  const html = `<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;font-size:16px;color:#0f172a">
+    <p>أهلاً بيك في <b>دورلي</b> 👋</p><p>${title}:</p>
+    <p style="font-size:30px;letter-spacing:8px;font-weight:bold;color:#2563eb;direction:ltr">${code}</p>
+    <p>الكود صالح لمدة ${CODE_MINUTES} دقايق. متقولش الكود ده لأي حد.</p>
+    <p style="color:#64748b;font-size:13px">لو انت مش اللي طلبت الكود، تجاهل الرسالة دي.</p></div>`;
+  const r = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
-    headers: { Authorization: "Basic " + btoa(`${SID}:${TOKEN}`), "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(form),
+    headers: { "api-key": BREVO, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ sender: { name: "دورلي", email: FROM }, to: [{ email: to }], subject: `${title}: ${code}`, htmlContent: html }),
   });
-  const body = await r.json().catch(() => ({}));
-  return { ok: r.ok, status: r.status, body };
+  if (!r.ok) console.error("brevo", r.status, await r.text().catch(() => ""));
+  return r.ok;
 }
 
 Deno.serve(async (req) => {
@@ -47,16 +50,16 @@ Deno.serve(async (req) => {
 
   const action = String(b.action || "");
   const purpose = b.purpose === "reset" ? "reset" : "signup";
-  const phone = normPhone(String(b.phone || ""));
-  if (!okPhone(phone)) return json({ error: "phone" }, 400);
+  const email = String(b.email || "").trim().toLowerCase();
+  if (!okMail(email)) return json({ error: "email" }, 400);
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
-  const { data: prof } = await admin.from("dorly_profiles").select("id, disabled").eq("phone", phone).maybeSingle();
+  const { data: prof } = await admin.from("dorly_profiles").select("id, disabled").eq("email", email).maybeSingle();
 
   if (action === "reset") {
     const t = await readToken(String(b.token || ""));
     const pw = String(b.password || "");
-    if (!t || t.phone !== phone || t.purpose !== "reset") return json({ error: "token" }, 400);
+    if (!t || t.sub !== email || t.purpose !== "reset") return json({ error: "token" }, 400);
     if (pw.length < 8 || pw.length > 72 || !/\d/.test(pw) || !/[A-Za-z؀-ۿ]/.test(pw)) return json({ error: "password" }, 400);
     if (prof && !prof.disabled) {
       const { error } = await admin.auth.admin.updateUserById(prof.id, { password: pw });
@@ -65,30 +68,33 @@ Deno.serve(async (req) => {
     return json({ ok: true });
   }
 
-  if (!SID || !TOKEN || !VSID) return json({ error: "sms_not_configured" }, 503);
-
   if (action === "send") {
-    if (purpose === "signup" && prof) return json({ error: "taken_phone" }, 409);
-    // reset for an unknown number: answer "ok" without sending, so numbers can't be probed
+    if (!BREVO || !FROM) return json({ error: "mail_not_configured" }, 503);
+    if (purpose === "signup" && prof) return json({ error: "taken_email" }, 409);
+    // unknown address on reset: answer "ok" without sending, so addresses can't be probed
     if (purpose === "reset" && (!prof || prof.disabled)) return json({ ok: true });
-    const r = await twilio("Verifications", { To: e164(phone), Channel: "sms", Locale: "ar" });
-    if (!r.ok) {
-      console.error("twilio send", r.status, r.body?.code, r.body?.message);
-      return json({ error: r.status === 429 || r.body?.code === 60203 ? "too_many" : "send_failed" }, r.status === 429 ? 429 : 502);
-    }
+    const since = new Date(Date.now() - 3600_000).toISOString();
+    const { count } = await admin.from("dorly_otp_codes").select("id", { count: "exact", head: true }).eq("target", email).gte("created_at", since);
+    if ((count || 0) >= MAX_SENDS_PER_HOUR) return json({ error: "too_many" }, 429);
+    const code = newCode();
+    const { error } = await admin.from("dorly_otp_codes").insert({ target: email, purpose, code_hash: await codeHash(email, purpose, code), expires_at: new Date(Date.now() + CODE_MINUTES * 60_000).toISOString() });
+    if (error) return json({ error: "send_failed" }, 500);
+    if (!(await sendMail(email, code, purpose))) return json({ error: "send_failed" }, 502);
     return json({ ok: true });
   }
 
   if (action === "check") {
     const code = toEn(String(b.code || "")).replace(/\D/g, "");
-    if (code.length < 4 || code.length > 10) return json({ error: "code" }, 400);
-    const r = await twilio("VerificationCheck", { To: e164(phone), Code: code });
-    if (!r.ok) {
-      // 404 = no pending verification (expired, used, or too many wrong tries)
-      return json({ error: r.status === 404 ? "expired" : r.status === 429 ? "too_many" : "check_failed" }, r.status === 404 ? 410 : 502);
+    if (code.length !== 6) return json({ error: "code" }, 400);
+    const { data: row } = await admin.from("dorly_otp_codes").select("*").eq("target", email).eq("purpose", purpose)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (!row || new Date(row.expires_at).getTime() < Date.now() || row.tries >= MAX_TRIES) return json({ error: "expired" }, 410);
+    if (row.code_hash !== await codeHash(email, purpose, code)) {
+      await admin.from("dorly_otp_codes").update({ tries: row.tries + 1 }).eq("id", row.id);
+      return json({ error: "wrong_code" }, 400);
     }
-    if (r.body?.status !== "approved") return json({ error: "wrong_code" }, 400);
-    return json({ ok: true, token: await makeToken(phone, purpose) });
+    await admin.from("dorly_otp_codes").delete().eq("target", email).eq("purpose", purpose);
+    return json({ ok: true, token: await makeToken(email, purpose) });
   }
 
   return json({ error: "action" }, 400);

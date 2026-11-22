@@ -290,7 +290,7 @@ const VER=[null,
  {t:'الجهاز تم اختباره',d:'وظايف الجهاز الأساسية اتجربت فعلياً.'},
  {t:'فحص فني',d:'الجهاز اتفحص فنياً بواسطة فني متخصص.'}];
 const CHECKS={3:['اللمس والشاشة','الكاميرات','الصوت والمايك','الشحن','الواي فاي والشبكة'],4:['اللمس والشاشة','الكاميرات','الصوت والمايك','الشحن','الواي فاي والشبكة','قراءة صحة البطارية من النظام','فحص مظهر الجسم والخدوش']};
-const BADGES={phone:'رقم الهاتف متحقق منه',identity:'هوية البائع متحققة',merchant:'تاجر موثّق',trusted:'بائع موثوق'};
+const BADGES={email:'الإيميل متحقق منه',phone:'رقم الهاتف متحقق منه',identity:'هوية البائع متحققة',merchant:'تاجر موثّق',trusted:'بائع موثوق'};
 const COL={'أسود':'#1f2937','أبيض':'#e5e7eb','أزرق':'#60a5fa','وردي':'#f9a8d4','أخضر':'#86efac','بنفسجي':'#c4b5fd','ذهبي':'#fcd34d','تيتانيوم':'#a8a29e','برتقالي':'#fb923c'};
 const STORAGES=['128GB','256GB','512GB','1TB'];
 
@@ -345,7 +345,7 @@ const nm=l=>`iPhone ${l.gen}${l.variant?' '+l.variant:''}`;
 const sel=id=>DB.sellers.find(s=>s.id===id)||{id,name:'—',type:'individual',city:'',badges:[]};
 const pub=l=>l.status==='active'&&(DEMO||!l.sample);
 const isVer=s=>s.badges.some(b=>['merchant','trusted','identity'].includes(b));
-const topBadge=s=>['merchant','trusted','identity','phone'].find(b=>s.badges.includes(b));
+const topBadge=s=>['merchant','trusted','identity','phone','email'].find(b=>s.badges.includes(b));
 const sScore=l=>{const s=sel(l.seller);return s.badges.length*2+(s.badges.includes('merchant')?2:0)+l.level};
 const sType=s=>s.type==='merchant'?'تاجر':'فرد';
 const byId=id=>DB.listings.find(l=>l.id===id);
@@ -522,7 +522,7 @@ function admCsv(){
 }
 function admV(id){if(!isAdm())return;const v=DB.verifs.find(x=>x.id===id),s=sel(v.seller),b=v.kind==='merchant'?'merchant':'identity';if(!s.badges.includes(b))s.badges.push(b);v.status='approved';v.time=TODAY;aud('قبول توثيق '+s.name);toast('اتوثّق '+s.name);route()}
 function admRejectDo(ev,id){ev.preventDefault();if(!isAdm())return;const v=DB.verifs.find(x=>x.id===id);v.status='rejected';v.reason=$('#rj_s').value;aud('رفض توثيق '+sel(v.seller).name+' ('+v.reason+')');closeModal();toast('اترفض الطلب');route()}
-function admTrust(sid){if(!isAdm())return;const s=sel(sid);if(s.badges.includes('trusted'))s.badges=s.badges.filter(b=>b!=='trusted');else{if(!s.badges.includes('phone')||!(s.badges.includes('identity')||s.badges.includes('merchant'))){toast('لازم رقم متحقق وتوثيق هوية أو تاجر الأول');return}s.badges.push('trusted')}aud((s.badges.includes('trusted')?'منح':'سحب')+' «موثوق» '+s.name);route()}
+function admTrust(sid){if(!isAdm())return;const s=sel(sid);if(s.badges.includes('trusted'))s.badges=s.badges.filter(b=>b!=='trusted');else{if(!(s.badges.includes('phone')||s.badges.includes('email'))||!(s.badges.includes('identity')||s.badges.includes('merchant'))){toast('لازم إيميل أو رقم متحقق وتوثيق هوية أو تاجر الأول');return}s.badges.push('trusted')}aud((s.badges.includes('trusted')?'منح':'سحب')+' «موثوق» '+s.name);route()}
 function admApprove(id){if(!isAdm())return;const l=byId(id),ok=$('#adm_ok_'+id);l.status='active';l.reviewed=!!(ok&&ok.checked);if(l.reviewed&&l.level<2)l.level=2;aud(`موافقة ونشر ${nm(l)} (${id})${l.reviewed?' بعد مطابقة اللقطات':''}`);toast('اتنشر الإعلان'+(l.reviewed?' بمستوى «البيانات متراجعة»':' بمستوى «إفصاح البائع»'));route()}
 function admRejectLDo(ev,id){ev.preventDefault();if(!isAdm())return;const l=byId(id);l.status='rejected';l.reason=$('#rjl_s').value;aud(`رفض إعلان ${nm(l)} (${id}): ${l.reason}`);closeModal();toast('اترفض الإعلان');route()}
 

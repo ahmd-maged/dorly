@@ -306,7 +306,7 @@ const VER=[null,
  {t:'الجهاز تم اختباره',d:'وظايف الجهاز الأساسية اتجربت فعلياً.'},
  {t:'فحص فني',d:'الجهاز اتفحص فنياً بواسطة فني متخصص.'}];
 const CHECKS={3:['اللمس والشاشة','الكاميرات','الصوت والمايك','الشحن','الواي فاي والشبكة'],4:['اللمس والشاشة','الكاميرات','الصوت والمايك','الشحن','الواي فاي والشبكة','قراءة صحة البطارية من النظام','فحص مظهر الجسم والخدوش']};
-const BADGES={phone:'رقم الهاتف متحقق منه',identity:'هوية البائع متحققة',merchant:'تاجر موثّق',trusted:'بائع موثوق'};
+const BADGES={email:'الإيميل متحقق منه',phone:'رقم الهاتف متحقق منه',identity:'هوية البائع متحققة',merchant:'تاجر موثّق',trusted:'بائع موثوق'};
 const COL={'أسود':'#1f2937','أبيض':'#e5e7eb','أزرق':'#60a5fa','وردي':'#f9a8d4','أخضر':'#86efac','بنفسجي':'#c4b5fd','ذهبي':'#fcd34d','تيتانيوم':'#a8a29e','برتقالي':'#fb923c'};
 const STORAGES=['128GB','256GB','512GB','1TB'];
 /* Full iPhone line-up for the "add device" form: [gen, label, editions, storage sizes] */
@@ -379,7 +379,7 @@ const nm=l=>`iPhone ${l.gen}${l.variant?' '+l.variant:''}`;
 const sel=id=>DB.sellers.find(s=>s.id===id)||{id,name:'—',type:'individual',city:'',badges:[]};
 const pub=l=>l.status==='active'&&(DEMO||!l.sample);
 const isVer=s=>s.badges.some(b=>['merchant','trusted','identity'].includes(b));
-const topBadge=s=>['merchant','trusted','identity','phone'].find(b=>s.badges.includes(b));
+const topBadge=s=>['merchant','trusted','identity','phone','email'].find(b=>s.badges.includes(b));
 const sScore=l=>{const s=sel(l.seller);return s.badges.length*2+(s.badges.includes('merchant')?2:0)+l.level};
 const sType=s=>s.type==='merchant'?'تاجر':'فرد';
 const byId=id=>DB.listings.find(l=>l.id===id);
@@ -651,7 +651,7 @@ function whyList(l,c,pool){
  if(c.bat&&l.battery>=c.bat)w.push(`بطاريته ${l.battery}% أعلى من ${c.bat}% اللي طلبتها`);
  else if(l.battery>=93)w.push(`بطارية قوية (${l.battery}%)`);
  if(l.level>=3)w.push(`${VER[l.level].t} بتاريخ ${l.insp}`);
- const b=topBadge(s);if(b&&b!=='phone')w.push(`البائع: ${BADGES[b]}`);
+ const b=topBadge(s);if(b&&!['phone','email'].includes(b))w.push(`البائع: ${BADGES[b]}`);
  return w.slice(0,3);
 }
 async function finishBuy(){
@@ -932,7 +932,7 @@ function sendInq(ev,id){ev.preventDefault();const l=byId(id);
 const GOVS=['القاهرة','الجيزة','الإسكندرية','القليوبية','الدقهلية','الشرقية','الغربية','المنوفية','البحيرة','كفر الشيخ','دمياط','بورسعيد','الإسماعيلية','السويس','الفيوم','بني سويف','المنيا','أسيوط','سوهاج','قنا','الأقصر','أسوان','مطروح','البحر الأحمر','شمال سيناء','جنوب سيناء','الوادي الجديد'];
 const ACTS=['محل موبايلات','معرض / جملة','بيع وصيانة','بيع أونلاين'];
 const RSTEPS={individual:['account','otp','identity','profile','done'],merchant:['account','otp','business','docs','profile','done'],customer:['account','otp','done']};
-const RLBL={account:'بيانات الحساب',otp:'تأكيد الموبايل',identity:'إثبات الهوية',profile:'ملفك العام',business:'بيانات النشاط',docs:'المستندات',done:'تم'};
+const RLBL={account:'بيانات الحساب',otp:'تأكيد الإيميل',identity:'إثبات الهوية',profile:'ملفك العام',business:'بيانات النشاط',docs:'المستندات',done:'تم'};
 let RETURN='',REG=null,RST=null,LOGIN_FAILS=0,OTPT=null,AUTH_ROLE=null,AUTH_REASON='',VF={};
 const normPhone=s=>{s=toEn(s).replace(/[\s\-()]/g,'');if(s.startsWith('+20'))s='0'+s.slice(3);else if(s.startsWith('0020'))s='0'+s.slice(4);else if(/^20\d{10}$/.test(s))s='0'+s.slice(2);return s};
 const okPhone=s=>/^01[0125]\d{8}$/.test(normPhone(s));
@@ -947,7 +947,7 @@ function waBuyer(qid){const q=DB.inquiries.find(x=>x.id===qid),n=q&&waNum(q.phon
  if(q.status==='new'){q.status='read';save()}
  window.open(waUrl(n,`أهلاً ${q.name}، معاك ${s?s.name:''} من دورلي بخصوص استفسارك عن ${l?nm(l)+' '+l.storage:'الجهاز'}.`),'_blank','noopener');route()}
 const okMail=s=>/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
-const otpMsg=c=>({sms_not_configured:'خدمة الرسايل مش متاحة دلوقتي. جرّب كمان شوية.',too_many:'طلبت أكواد كتير. استنى 10 دقايق وجرّب تاني.',send_failed:'ماقدرناش نبعت رسالة للرقم ده. اتأكد من الرقم وجرّب تاني.',wrong_code:'الكود غلط. اتأكد منه وجرّب تاني.',expired:'الكود انتهى أو اتجرّب كتير. اطلب كود جديد.',code:'اكتب الكود اللي وصلك في الرسالة.',taken_phone:'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول',phone:'اكتب رقم موبايل مصري صحيح'})[c]||'حصلت مشكلة. جرّب تاني.';
+const otpMsg=c=>({mail_not_configured:'خدمة الإيميل مش متاحة دلوقتي. جرّب كمان شوية.',too_many:'طلبت أكواد كتير. استنى ساعة وجرّب تاني.',send_failed:'ماقدرناش نبعت إيميل للعنوان ده. اتأكد منه وجرّب تاني.',wrong_code:'الكود غلط. اتأكد منه وجرّب تاني.',expired:'الكود انتهى أو اتجرّب كتير. اطلب كود جديد.',code:'اكتب الكود اللي وصلك على الإيميل (6 أرقام).',taken_email:'الإيميل ده مسجّل قبل كده — جرّب تسجّل دخول',taken_phone:'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول',email:'اكتب إيميل صحيح'})[c]||'حصلت مشكلة. جرّب تاني.';
 const genOtp=()=>String(Math.floor(100000+Math.random()*900000));
 const autoDisplay=n=>{const p=String(n||'').trim().split(/\s+/);return p.length>1?p[0]+' '+p[p.length-1][0]+'.':p[0]||''};
 async function hashPw(pw,salt){
@@ -1003,22 +1003,22 @@ async function doLoginForm(ev){
 function authReset(){
  if(!RST)RST={step:0};
  const back=`<button type="button" class="lnk" onclick="RST=null;go('#/auth/login')">رجوع لتسجيل الدخول</button>`;
- if(RST.step===0)return `<h2>نسيت كلمة السر؟</h2><p class="mut" style="margin-bottom:14px">اكتب رقم موبايلك وهنبعتلك كود تأكيد في رسالة SMS.</p><form class="form" onsubmit="resetSend(event)"><label>رقم الموبايل<input id="r_ph" required inputmode="tel" dir="ltr" style="text-align:start"></label><div id="rerr"></div><button class="btn primary">إرسال الكود</button>${back}</form>`;
- if(RST.step===1)return `<h2>اكتب كود التأكيد</h2><p class="mut">لو الرقم مسجّل هتوصله رسالة SMS فيها كود من 6 أرقام.</p><form class="form" onsubmit="resetVerify(event)"><label>الكود<input id="r_otp" inputmode="numeric" maxlength="6" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button><div style="display:flex;gap:10px;align-items:center"><button type="button" class="btn ghost sm" id="rs" onclick="resetSend()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span></div></form>`;
+ if(RST.step===0)return `<h2>نسيت كلمة السر؟</h2><p class="mut" style="margin-bottom:14px">اكتب الإيميل اللي سجّلت بيه وهنبعتلك عليه كود تأكيد.</p><form class="form" onsubmit="resetSend(event)"><label>الإيميل<input id="r_ph" type="email" required dir="ltr" style="text-align:start"></label><div id="rerr"></div><button class="btn primary">إرسال الكود</button>${back}</form>`;
+ if(RST.step===1)return `<h2>اكتب كود التأكيد</h2><p class="mut">لو الإيميل مسجّل هيوصله كود من 6 أرقام. لو مش لاقيه، بص في الـ Spam.</p><form class="form" onsubmit="resetVerify(event)"><label>الكود<input id="r_otp" inputmode="numeric" maxlength="6" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button><div style="display:flex;gap:10px;align-items:center"><button type="button" class="btn ghost sm" id="rs" onclick="resetSend()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span></div></form>`;
  return `<h2>كلمة سر جديدة</h2><form class="form" onsubmit="resetSave(event)"><label>كلمة السر الجديدة<div style="position:relative"><input id="r_pw" type="password" autocomplete="new-password" style="padding-inline-end:64px"><button type="button" class="pwt" onclick="togglePw('r_pw',this)">إظهار</button></div><span class="mut" style="font-size:12px;font-weight:400">8 حروف على الأقل، فيها حروف وأرقام.</span></label><label>تأكيد كلمة السر<input id="r_pw2" type="password" autocomplete="new-password"></label><div id="rerr"></div><button class="btn primary">حفظ</button></form>`;
 }
 async function resetSend(ev){
  if(ev)ev.preventDefault();
- const ph=RST.phone||normPhone($('#r_ph').value);
- if(!okPhone(ph)){showErr(['اكتب رقم موبايل مصري صحيح']);return}
- const r=await Cloud.otp({action:'send',phone:ph,purpose:'reset'});
+ const ph=RST.phone||$('#r_ph').value.trim().toLowerCase();
+ if(!okMail(ph)){showErr(['اكتب إيميل صحيح']);return}
+ const r=await Cloud.otp({action:'send',email:ph,purpose:'reset'});
  if(r.error){showErr([otpMsg(r.error)]);return}
  RST={step:1,phone:ph,sent:Date.now()};viewAuth('reset');
 }
 async function resetVerify(ev){
  ev.preventDefault();const v=toEn($('#r_otp').value.trim());
- if(!/^\d{4,10}$/.test(v)){showErr([otpMsg('code')]);return}
- const r=await Cloud.otp({action:'check',phone:RST.phone,code:v,purpose:'reset'});
+ if(!/^\d{6}$/.test(v)){showErr([otpMsg('code')]);return}
+ const r=await Cloud.otp({action:'check',email:RST.phone,code:v,purpose:'reset'});
  if(r.error){showErr([otpMsg(r.error)]);return}
  RST.token=r.token;RST.step=2;viewAuth('reset');
 }
@@ -1026,7 +1026,7 @@ async function resetSave(ev){
  ev.preventDefault();const p=$('#r_pw').value,p2=$('#r_pw2').value;
  if(p.length<8||!/\d/.test(p)||!/[A-Za-z\u0600-\u06FF]/.test(p)){showErr(['كلمة السر لازم تكون 8 حروف على الأقل وفيها حروف وأرقام']);return}
  if(p!==p2){showErr(['كلمتين السر مش متطابقين']);return}
- const r=await Cloud.otp({action:'reset',phone:RST.phone,token:RST.token,password:p});
+ const r=await Cloud.otp({action:'reset',email:RST.phone,token:RST.token,password:p});
  if(r.error){showErr([r.error==='token'?'الكود انتهت صلاحيته. ابدأ من الأول.':'حصلت مشكلة. جرّب تاني.']);return}
  RST=null;toast('كلمة السر اتغيّرت. ادخل بيها دلوقتي.');go('#/auth/login');
 }
@@ -1059,18 +1059,18 @@ function regPick(r){REG={role:r,step:0,d:{},files:{}};viewAuth('register')}
 function regChangeType(){REG=null;AUTH_ROLE=null;viewAuth('register')}
 function previewCard(){
  const d=REG.d,m=REG.role==='merchant',n=m?d.bizName:(d.display||'—'),city=(d.area?d.area+' – ':'')+(d.gov||'');
- return `<div class="card sbox" style="margin-top:12px"><div class="avatar-s" style="width:46px;height:46px;font-size:18px">${esc((n||'?')[0])}</div><div><div class="hnt">كده هتظهر للمشترين</div><b>${esc(n||'—')}</b> <span class="tag ${m?'mer':''}">${m?'تاجر':'فرد'}</span><div><span class="tag ok">${I('check',12)} ${BADGES.phone}</span></div><div class="mut" style="font-size:13px">${I('pin',13)} ${esc(city||'—')}</div></div></div>`;
+ return `<div class="card sbox" style="margin-top:12px"><div class="avatar-s" style="width:46px;height:46px;font-size:18px">${esc((n||'?')[0])}</div><div><div class="hnt">كده هتظهر للمشترين</div><b>${esc(n||'—')}</b> <span class="tag ${m?'mer':''}">${m?'تاجر':'فرد'}</span><div><span class="tag ok">${I('check',12)} ${BADGES.email}</span></div><div class="mut" style="font-size:13px">${I('pin',13)} ${esc(city||'—')}</div></div></div>`;
 }
 function regStepHtml(st){
  const d=REG.d,r=REG.role;
  switch(st){
  case 'account':return `<h2>${r==='merchant'?'بيانات صاحب الحساب':r==='customer'?'حساب العميل':'بيانات حسابك'}</h2><p class="mut" style="margin-bottom:12px">نوع الحساب: <b>${r==='merchant'?'تاجر':r==='individual'?'بائع حر (فرد)':'عميل'}</b> <button class="lnk" onclick="regChangeType()">تغيير</button></p>
-  <div class="form">${fld('name',r==='merchant'?'اسم صاحب النشاط بالكامل':'اسمك بالكامل',{req:1,ac:'name',hint:'بيستخدم في التحقق فقط، مش بيتعرض علناً.'})}${fld('phone','رقم الموبايل',{req:1,type:'tel',ac:'tel',attr:'dir="ltr" style="text-align:start" inputmode="tel"',ph:'01012345678'})}${fld('email','الإيميل (اختياري)',{type:'email',ac:'email',attr:'dir="ltr" style="text-align:start"'})}
+  <div class="form">${fld('name',r==='merchant'?'اسم صاحب النشاط بالكامل':'اسمك بالكامل',{req:1,ac:'name',hint:'بيستخدم في التحقق فقط، مش بيتعرض علناً.'})}${fld('phone','رقم الموبايل',{req:1,type:'tel',ac:'tel',attr:'dir="ltr" style="text-align:start" inputmode="tel"',ph:'01012345678'})}${fld('email','الإيميل',{req:1,type:'email',ac:'email',attr:'dir="ltr" style="text-align:start"',hint:'هنبعتلك عليه كود تأكيد الحساب.'})}
   <div class="two">${pwf('password','كلمة السر','8 حروف على الأقل، فيها حروف وأرقام.')}${pwf('password2','تأكيد كلمة السر')}</div>
-  <label class="chkl"><input type="checkbox" ${d.terms?'checked':''} onchange="REG.d.terms=this.checked"> <span>موافق على شروط الاستخدام وسياسة الخصوصية، وإن بياناتي ومستنداتي بتتستخدم للتحقق بس.</span></label></div>${regNav(st,{next:'التالي: تأكيد الموبايل'})}`;
- case 'otp':return `<h2>أكّد رقم موبايلك</h2><p class="mut">بعتنالك رسالة SMS فيها كود من 6 أرقام على <b dir="ltr">${esc(normPhone(d.phone))}</b>.</p>
+  <label class="chkl"><input type="checkbox" ${d.terms?'checked':''} onchange="REG.d.terms=this.checked"> <span>موافق على شروط الاستخدام وسياسة الخصوصية، وإن بياناتي ومستنداتي بتتستخدم للتحقق بس.</span></label></div>${regNav(st,{next:'التالي: تأكيد الإيميل'})}`;
+ case 'otp':return `<h2>أكّد إيميلك</h2><p class="mut">بعتنالك إيميل فيه كود من 6 أرقام على <b dir="ltr">${esc((d.email||'').trim())}</b>. لو مش لاقيه، بص في الـ Spam أو الرسائل غير المرغوب فيها.</p>
   <form class="form" onsubmit="otpVerify(event)"><label>كود التأكيد<input id="f_otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button></form>
-  <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn ghost sm" id="rs" onclick="resendOtp()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span><button class="btn ghost sm" onclick="regBack()">تغيير الرقم</button></div>`;
+  <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn ghost sm" id="rs" onclick="resendOtp()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span><button class="btn ghost sm" onclick="regBack()">تغيير الإيميل</button></div>`;
  case 'identity':return `<h2>إثبات هويتك <span class="tag">اختياري دلوقتي</span></h2><p class="mut" style="margin-bottom:10px">عشان تاخد شارة «هوية البائع متحققة» ويثق فيك المشتري أسرع. مش بنسأل عن رقم البطاقة.</p><div class="callout" style="margin:0 0 12px">${I('lock',14)} صور البطاقة بيشوفها فريق التحقق بس، ومش بتتعرض للمشترين ولا بتتنشر أبداً. الشارة بتتمنح بعد المراجعة.</div>
   <div class="form">${upl('idf','صورة البطاقة (الوش)')}${upl('idb','صورة البطاقة (الضهر)')}${upl('selfie','سيلفي وانت ماسك البطاقة')}</div>${regNav(st,{skip:'هعمل ده بعدين'})}`;
  case 'business':return `<h2>بيانات النشاط التجاري</h2><p class="mut" style="margin-bottom:12px">دي بتظهر على صفحة المحل (ما عدا العنوان التفصيلي).</p>
@@ -1089,7 +1089,7 @@ function validate(st){
   need('name','اكتب اسمك بالكامل');
   if(d.name&&d.name.trim().split(/\s+/).length<2)e.push('اكتب الاسم الأول واسم العيلة على الأقل');
   if(!okPhone(d.phone||''))e.push('رقم الموبايل لازم يكون مصري صحيح (مثلاً 01012345678)');
-  if(d.email&&!okMail(d.email))e.push('الإيميل مش مظبوط');
+  if(!okMail((d.email||'').trim()))e.push('اكتب إيميل صحيح — هنبعتلك عليه كود التأكيد');
   const pw=d.password||'';
   if(pw.length<8||!/\d/.test(pw)||!/[A-Za-z؀-ۿ]/.test(pw))e.push('كلمة السر لازم تكون 8 حروف على الأقل وفيها حروف وأرقام');
   else if(pw!==d.password2)e.push('كلمتين السر مش متطابقين');
@@ -1101,7 +1101,7 @@ function validate(st){
  if(st==='profile'){if(r==='individual'){need('display','اكتب الاسم اللي هيظهر للمشترين');need('gov','اختار المحافظة')}if(d.bio&&d.bio.length>300)e.push('النبذة أطول من 300 حرف');if(d.whatsapp&&!okPhone(d.whatsapp))e.push('رقم الواتساب مش مظبوط')}
  return e;
 }
-async function sendOtp(){const r=await Cloud.otp({action:'send',phone:normPhone(REG.d.phone),purpose:'signup'});if(r.error)return otpMsg(r.error);REG.otp={sent:Date.now()};REG.otpToken=null}
+async function sendOtp(){const r=await Cloud.otp({action:'send',email:(REG.d.email||'').trim().toLowerCase(),purpose:'signup'});if(r.error)return otpMsg(r.error);REG.otp={sent:Date.now()};REG.otpToken=null}
 async function resendOtp(){const b=$('#rs');if(b)b.disabled=true;const e=await sendOtp();if(e){showErr([e]);if(b)b.disabled=false;return}viewAuth('register');toast('بعتنالك كود جديد')}
 async function advance(){
  const n=REG.step+1,steps=RSTEPS[REG.role];
@@ -1113,7 +1113,7 @@ async function regNext(skip){
  const st=RSTEPS[REG.role][REG.step],e=skip?[]:validate(st);
  if(e.length){showErr(e);return}
  if(st==='account'){const t=await Cloud.taken(normPhone(REG.d.phone),(REG.d.email||'').trim());if(t){showErr([t==='phone'?'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول':'الإيميل ده مسجّل قبل كده']);return}}
- if(st==='account'){const p=normPhone(REG.d.phone);if(REG.phoneOk&&REG.vph===p)REG.step++;else{REG.phoneOk=false;toast('جاري إرسال الكود…');const e2=await sendOtp();if(e2){showErr([e2]);return}}}
+ if(st==='account'){const p=(REG.d.email||'').trim().toLowerCase();if(REG.phoneOk&&REG.vph===p)REG.step++;else{REG.phoneOk=false;toast('جاري إرسال الكود…');const e2=await sendOtp();if(e2){showErr([e2]);return}}}
  await advance();
 }
 function regBack(){
@@ -1121,10 +1121,10 @@ function regBack(){
 }
 async function otpVerify(ev){
  ev.preventDefault();const v=toEn($('#f_otp').value.trim()),btn=ev.submitter||$('#f_otp').form.querySelector('button');
- if(!/^\d{4,10}$/.test(v)){showErr([otpMsg('code')]);return}
- btn.disabled=true;const r=await Cloud.otp({action:'check',phone:normPhone(REG.d.phone),code:v,purpose:'signup'});btn.disabled=false;
+ if(!/^\d{6}$/.test(v)){showErr([otpMsg('code')]);return}
+ btn.disabled=true;const r=await Cloud.otp({action:'check',email:(REG.d.email||'').trim().toLowerCase(),code:v,purpose:'signup'});btn.disabled=false;
  if(r.error){showErr([otpMsg(r.error)]);return}
- REG.otpToken=r.token;REG.phoneOk=true;REG.vph=normPhone(REG.d.phone);advance();
+ REG.otpToken=r.token;REG.phoneOk=true;REG.vph=(REG.d.email||'').trim().toLowerCase();advance();
 }
 async function finalizeReg(){
  if(REG.created||REG.busy)return;
@@ -1143,7 +1143,7 @@ async function finalizeReg(){
 function regDone(){
  const u=REG.created,r=REG.role,sid=u.sellerId,row=(t,tag,note)=>`<div class="vl on" style="align-items:center"><div style="flex:1"><b>${t}</b>${note?`<div class="mut" style="font-size:13px">${note}</div>`:''}</div>${tag}</div>`;
  const vs=k=>{const v=vstatus(sid,k);return v?v.status:'none'};
- let rows=row('رقم الهاتف',stTag('approved'),'اتأكد بالكود');
+ let rows=row('الإيميل',stTag('approved'),'اتأكد بالكود');
  if(r==='individual')rows+=row('هوية البائع متحققة',stTag(vs('identity')),vs('identity')==='none'?'ارفع بطاقتك من لوحتك لما تحب':'بنراجع المستندات، غالباً خلال 1–3 أيام عمل');
  if(r==='merchant')rows+=row('تاجر موثّق',stTag(vs('merchant')),vs('merchant')==='none'?'ارفع السجل التجاري والبطاقة الضريبية من لوحتك':'بنراجع المستندات، غالباً خلال 1–3 أيام عمل')+row('هوية المالك',stTag(vs('identity')),vs('identity')==='none'?'اختياري':'');
  if(r!=='customer')rows+=row('بائع موثوق','<span class="tag">بالسجل</span>','بتتمنح بعد تعاملات ناجحة — مش بتتشرى');
@@ -1182,7 +1182,7 @@ function submitVerif(k){
 function verifyTab(s){
  const mer=s.type==='merchant';
  return `<div class="callout" style="margin:0 0 14px">الشارات بتتمنح بعد مراجعة المستندات فقط. الاشتراكات المدفوعة مالهاش علاقة بالتوثيق ومش بتزوّد ثقة المشتري.</div>
- <div class="card" style="padding:18px;margin-bottom:12px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><h3>رقم الهاتف متحقق منه</h3>${stTag(s.badges.includes('phone')?'approved':'none')}</div><p class="mut">اتأكد بكود التأكيد وقت التسجيل.</p></div>
+ <div class="card" style="padding:18px;margin-bottom:12px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><h3>الإيميل متحقق منه</h3>${stTag(s.badges.includes('email')||s.badges.includes('phone')?'approved':'none')}</div><p class="mut">اتأكد بكود التأكيد وقت التسجيل.</p></div>
  ${mer?vcard('merchant',s):''}${vcard('identity',s)}
  <div class="card" style="padding:18px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><h3>بائع موثوق</h3>${s.badges.includes('trusted')?stTag('approved'):'<span class="tag">بالسجل</span>'}</div><p class="mut">بتتمنح تلقائياً بعد سجل تعاملات ناجحة وتقييمات كويسة وبدون شكاوى مؤكدة. مفيش طريقة لطلبها أو شرائها.</p></div>`;
 }
