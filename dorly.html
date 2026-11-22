@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>دورلي — مساعدك لشراء وبيع وتبديل الآيفون</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+<!--
+  ARCHITECTURE NOTES (prototype -> production)
+  - This file is a self-contained working prototype (no build step). Data lives in `DB` (in-memory + localStorage).
+  - `Backend` = stand-in for server functions (Prisma queries). The AI layer may ONLY recommend what Backend returns.
+  - `AIService` = swap point for the Claude API. In production it must be a server route (/api/chat) reading
+    ANTHROPIC_API_KEY from an environment variable, using tool-calling limited to Backend.search*/marketEstimate.
+    Never put an API key in this frontend file.
+  - Entities mirrored in DB: users, sellers(profiles/merchants), listings(devices+specs), verification(level/insp),
+    inquiries, complaints. Chat sessions/messages = S.msgs.
+-->
+<style>
+:root{--p:#2563EB;--pd:#1E40AF;--pl:#DBEAFE;--bg:#fff;--bg2:#F8FAFC;--tx:#0F172A;--tx2:#64748B;--bd:#E2E8F0;--ok:#16A34A;--okl:#DCFCE7;--warn:#B45309;--warnl:#FEF3C7;--red:#DC2626;--r:16px;--sh:0 1px 2px rgba(15,23,42,.04),0 10px 30px rgba(15,23,42,.07)}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Poppins','IBM Plex Sans Arabic',system-ui,sans-serif;color:var(--tx);background:var(--bg);line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px}
+button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
+input,select,textarea{font:inherit;color:inherit}
+a{color:inherit;text-decoration:none}
+.ic{flex:none;vertical-align:middle}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+.mut{color:var(--tx2)}
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 18px;border-radius:12px;font-weight:600;font-size:15px;transition:.18s;border:1px solid transparent;white-space:nowrap}
+.btn.primary{background:var(--p);color:#fff;box-shadow:0 6px 16px rgba(37,99,235,.28)}
+.btn.primary:hover{background:var(--pd);transform:translateY(-1px)}
+.btn.ghost{background:#fff;border-color:var(--bd);color:var(--tx)}
+.btn.ghost:hover{border-color:var(--p);color:var(--p)}
+.btn.soft{background:var(--pl);color:var(--pd)}
+.btn.wa{background:#25D366;color:#fff;text-decoration:none}.btn.wa:hover{background:#1ebe5b;transform:translateY(-1px)}
+.btn.soft:hover{background:#bfdbfe}
+.btn.lg{padding:14px 26px;font-size:17px;border-radius:14px}
+.btn.sm{padding:6px 12px;font-size:13px;border-radius:10px}
+.btn.danger{background:#fff;border-color:#fecaca;color:var(--red)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+/* demo bar */
+#demo-bar{background:var(--warnl);color:var(--warn);font-size:13px;text-align:center;padding:6px 12px}
+#demo-bar button{text-decoration:underline;font-weight:600;margin-inline-start:8px}
+/* header */
+#hdr{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.88);backdrop-filter:blur(14px);border-bottom:1px solid var(--bd)}
+.hdr-in{max-width:1180px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:24px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:22px;color:var(--pd)}
+.logo-mark{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--p),var(--pd));display:grid;place-items:center;color:#fff}
+.nav{display:flex;gap:4px;margin-inline-start:12px;flex:1}
+.nav a{padding:8px 14px;border-radius:10px;color:var(--tx2);font-weight:500;font-size:15px;transition:.15s}
+.nav a:hover{background:var(--bg2);color:var(--tx)}
+.nav a.on{color:var(--p);background:var(--pl)}
+.hdr-act{display:flex;align-items:center;gap:8px}
+.burger{display:none;width:40px;height:40px;border-radius:10px;border:1px solid var(--bd);place-items:center}
+.userchip{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:500;padding:4px 4px 4px 12px;border:1px solid var(--bd);border-radius:999px}
+.avatar-s{width:28px;height:28px;border-radius:50%;background:var(--pl);color:var(--pd);display:grid;place-items:center;font-size:13px;font-weight:700}
+@media(max-width:860px){
+ .burger{display:grid}
+ .nav{display:none;position:absolute;top:100%;inset-inline:0;background:#fff;flex-direction:column;padding:10px 20px 16px;border-bottom:1px solid var(--bd);margin:0}
+ .nav.open{display:flex}
+ .hdr-in{gap:10px}.logo{flex:1}
+ .userchip span.nm{display:none}.userchip{padding:4px}
+}
+/* hero */
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center;padding:56px 0 40px}
+.pill{display:inline-flex;align-items:center;gap:6px;background:var(--pl);color:var(--pd);padding:6px 14px;border-radius:999px;font-size:13px;font-weight:600}
+.hero h1{font-size:clamp(32px,5vw,54px);line-height:1.3;margin:18px 0 14px;font-weight:700;letter-spacing:-.5px}
+.grad{background:linear-gradient(90deg,var(--p),#7c3aed);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lead{font-size:19px;color:var(--tx2);max-width:540px}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin:28px 0 22px}
+.mini-trust{display:flex;gap:18px;flex-wrap:wrap;list-style:none;color:var(--tx2);font-size:14px}
+.mini-trust li{display:flex;gap:6px;align-items:center}.mini-trust .ic{color:var(--ok)}
+.hero-vis{position:relative;min-height:420px;display:grid;place-items:center}
+.hero-vis:before{content:"";position:absolute;inset:6% 4%;background:radial-gradient(circle at 30% 30%,var(--pl),transparent 65%),radial-gradient(circle at 80% 80%,#ede9fe,transparent 60%);border-radius:40px;filter:blur(6px)}
+.prev{position:relative;width:min(100%,380px);background:#fff;border:1px solid var(--bd);border-radius:24px;box-shadow:var(--sh);padding:16px;animation:float 6s ease-in-out infinite}
+.prev-h{display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--bd);margin-bottom:12px}
+.prev .b{padding:9px 13px;border-radius:14px;font-size:14px;margin-bottom:8px;max-width:88%;opacity:0;animation:pop .5s forwards}
+.prev .b.bot{background:var(--bg2);border:1px solid var(--bd)}
+.prev .b.me{background:var(--p);color:#fff;margin-inline-start:auto}
+.prev .mini{display:flex;gap:10px;align-items:center;border:1px solid var(--bd);border-radius:14px;padding:8px;opacity:0;animation:pop .5s forwards}
+.prev .mini svg.ph{width:34px;height:56px}
+.chipf{position:absolute;background:#fff;border:1px solid var(--bd);box-shadow:var(--sh);border-radius:14px;padding:8px 12px;font-size:13px;font-weight:600;display:flex;gap:6px;align-items:center;animation:float 5s ease-in-out infinite}
+@keyframes float{50%{transform:translateY(-8px)}}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
+@media(max-width:900px){.hero{grid-template-columns:1fr;padding-top:32px}.hero-vis{min-height:380px}}
+section.sec{padding:44px 0}
+.sec h2{font-size:30px;margin-bottom:8px;font-weight:700}
+.sec .sub{color:var(--tx2);margin-bottom:26px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
+.grid3{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.card{background:#fff;border:1px solid var(--bd);border-radius:var(--r);box-shadow:var(--sh)}
+.svc{padding:24px;text-align:start;transition:.2s;cursor:pointer}
+.svc:hover{transform:translateY(-3px);border-color:var(--p)}
+.ico-b{width:48px;height:48px;border-radius:14px;background:var(--pl);color:var(--p);display:grid;place-items:center;margin-bottom:14px}
+.svc h3{margin-bottom:4px}
+.step-n{font-weight:700;color:var(--p);font-size:13px}
+/* verification tags */
+.vtag{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600}
+.v1{background:#F1F5F9;color:#475569}.v2{background:#E0F2FE;color:#0369A1}.v3{background:var(--pl);color:var(--pd)}.v4{background:var(--pd);color:#fff}
+.tag{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:var(--bg2);border:1px solid var(--bd);color:var(--tx2)}
+.tag.ok{background:var(--okl);border-color:#bbf7d0;color:#166534}
+.tag.mer{background:#EDE9FE;border-color:#DDD6FE;color:#5B21B6}
+.tag.warn{background:var(--warnl);border-color:#FDE68A;color:var(--warn)}
+/* device card */
+.dev{display:flex;flex-direction:column;overflow:hidden;transition:.2s}
+.dev:hover{transform:translateY(-3px)}
+.dev-img{position:relative;background:linear-gradient(160deg,var(--bg2),#EEF2FF);height:170px;display:grid;place-items:center}
+.dev-img svg.ph{height:140px}.dev-img img{height:140px;width:auto;max-width:100%;object-fit:contain;border-radius:10px}
+.samp{position:absolute;top:10px;inset-inline-start:10px;font-size:11px;background:var(--warnl);color:var(--warn);padding:1px 8px;border-radius:999px;font-weight:600}
+.cmpbox{position:absolute;top:10px;inset-inline-end:10px;background:#fff;border:1px solid var(--bd);border-radius:10px;padding:2px 8px;font-size:12px;display:flex;gap:4px;align-items:center;cursor:pointer}
+.dev-body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:8px;flex:1}
+.dev-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.dev-top h3{font-size:17px}
+.price{font-size:22px;font-weight:700;color:var(--pd)}.price small{font-size:13px;color:var(--tx2);font-weight:500}
+.meta{display:flex;gap:6px;flex-wrap:wrap}
+.seller-l{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--tx2);border-top:1px dashed var(--bd);padding-top:8px}
+.seller-l b{color:var(--tx)}
+.why{background:#F0F9FF;border:1px solid #BAE6FD;border-radius:12px;padding:8px 12px;font-size:13px;color:#075985}
+.why ul{margin:4px 18px 0}
+.dev-act{display:flex;gap:8px;margin-top:auto;padding-top:6px}
+.dev-act .btn{flex:1}
+/* chat */
+.chat-page{padding-block:18px 30px}
+.chat{max-width:900px;margin:0 auto;background:#fff;border:1px solid var(--bd);border-radius:24px;box-shadow:var(--sh);display:flex;flex-direction:column;height:calc(100dvh - 150px);min-height:560px;overflow:hidden}
+.chat.min{height:auto;min-height:0}.chat.min .chat-body,.chat.min .chat-prog,.chat.min .chat-in{display:none}
+.chat-h{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--bd)}
+.bot-av{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,var(--p),#7c3aed);color:#fff;display:grid;place-items:center;flex:none;position:relative}
+.bot-av.s{width:32px;height:32px;border-radius:11px}
+.chat-h .nm{font-weight:700;line-height:1.3}
+.status{font-size:13px;color:var(--ok);display:flex;align-items:center;gap:6px}
+.status:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--okl)}
+.chat-h .sp{flex:1}
+.icbtn{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--tx2)}
+.icbtn:hover{background:var(--bg2);color:var(--tx)}
+.chat-prog{padding:10px 18px;background:var(--bg2);border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:12px;font-size:13px;color:var(--tx2)}
+.bar{flex:1;height:6px;background:var(--bd);border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--p),#7c3aed);border-radius:99px;transition:width .4s}
+.chat-body{flex:1;overflow-y:auto;padding:20px 18px;display:flex;flex-direction:column;gap:12px;background:linear-gradient(#fff,#FBFDFF)}
+.row{display:flex;gap:10px;align-items:flex-end}
+.row.user{justify-content:flex-end}
+.row.pop{animation:pop .35s both}
+.bub{max-width:min(82%,560px);padding:11px 15px;border-radius:18px;background:var(--bg2);border:1px solid var(--bd);border-end-start-radius:6px;white-space:pre-line}
+.row.user .bub{background:var(--p);color:#fff;border-color:var(--p);border-end-start-radius:18px;border-end-end-radius:6px}
+.row.wide .bub{max-width:100%;width:100%;background:none;border:0;padding:0}
+.editb{opacity:.5;font-size:12px;display:flex;gap:4px;align-items:center;color:var(--tx2);padding:4px 8px;border-radius:8px}
+.editb:hover{opacity:1;background:var(--bg2)}
+.typing{display:flex;gap:4px;padding:14px 16px}
+.typing i{width:7px;height:7px;border-radius:50%;background:var(--tx2);opacity:.4;animation:bl 1.1s infinite}
+.typing i:nth-child(2){animation-delay:.18s}.typing i:nth-child(3){animation-delay:.36s}
+@keyframes bl{40%{opacity:1;transform:translateY(-3px)}}
+.opts-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;padding-inline-start:42px;animation:pop .4s both}
+.ocard{background:#fff;border:1.5px solid var(--bd);border-radius:16px;padding:16px;text-align:start;transition:.18s;display:flex;flex-direction:column;gap:6px}
+.ocard:hover{border-color:var(--p);box-shadow:0 8px 20px rgba(37,99,235,.15);transform:translateY(-2px)}
+.ocard .ico-b{margin:0 0 4px}.ocard b{font-size:16px}.ocard span.d{font-size:13px;color:var(--tx2)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding-inline-start:42px;animation:pop .4s both}
+.chip{padding:9px 16px;border-radius:999px;border:1.5px solid var(--bd);background:#fff;font-weight:500;font-size:15px;transition:.15s}
+.chip:hover{border-color:var(--p);background:var(--pl);color:var(--pd)}
+.chip.pri{background:var(--p);color:#fff;border-color:var(--p)}.chip.pri:hover{background:var(--pd);color:#fff}
+.chip.sec{border-style:dashed;color:var(--tx2)}
+.hint{padding-inline-start:42px;font-size:14px;color:var(--tx2);animation:pop .4s both}.hint button{color:var(--p);text-decoration:underline}
+.chat-in{display:flex;gap:10px;padding:12px 14px;border-top:1px solid var(--bd);background:#fff}
+.chat-in input{flex:1;border:1.5px solid var(--bd);border-radius:14px;padding:11px 16px;outline:none;background:var(--bg2);min-width:0}
+.chat-in input:focus{border-color:var(--p);background:#fff;box-shadow:0 0 0 4px var(--pl)}
+.send{width:46px;height:46px;border-radius:14px;background:var(--p);color:#fff;display:grid;place-items:center}
+.send .ic{transform:scaleX(-1)}
+.sumtab{width:100%;border-collapse:collapse;font-size:14px;background:#fff;border:1px solid var(--bd);border-radius:14px;overflow:hidden}
+.sumtab td{padding:8px 14px;border-bottom:1px solid var(--bd)}.sumtab tr:last-child td{border:0}.sumtab td:first-child{color:var(--tx2);width:38%;background:var(--bg2)}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap;padding-inline-start:42px}.thumbs img{width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--bd)}
+.resgrid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));padding-inline-start:0;width:100%}
+.trade{padding:16px;display:grid;gap:12px;grid-template-columns:1fr auto 1fr;align-items:center}
+.trade .sw{display:grid;place-items:center;color:var(--p)}
+.trade .box{background:var(--bg2);border:1px solid var(--bd);border-radius:14px;padding:12px;font-size:14px}
+.trade .full{grid-column:1/-1}
+@media(max-width:640px){.trade{grid-template-columns:1fr}.trade .sw{transform:rotate(90deg)}.opts-cards,.chips,.hint,.thumbs{padding-inline-start:0}.bub{max-width:92%}.row .bot-av{display:none}.chat{height:calc(100dvh - 120px);border-radius:18px}}
+/* pages */
+.page{padding-block:30px 60px}.page h1{font-size:30px;margin-bottom:6px}
+.crumb{display:inline-flex;align-items:center;gap:4px;color:var(--tx2);font-size:14px;margin-bottom:12px}.crumb:hover{color:var(--p)}
+.filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:14px;margin:18px 0;background:var(--bg2);border:1px solid var(--bd);border-radius:16px}
+.filters label{font-size:13px;color:var(--tx2);display:flex;flex-direction:column;gap:2px}
+.filters select{border:1px solid var(--bd);border-radius:10px;padding:7px 10px;background:#fff;min-width:120px}
+.filters .chk{flex-direction:row;align-items:center;gap:6px;padding-top:16px;color:var(--tx)}
+.cmpbar{position:fixed;bottom:18px;inset-inline:0;margin:auto;width:max-content;max-width:94vw;background:var(--tx);color:#fff;border-radius:16px;padding:10px 12px 10px 18px;display:flex;gap:14px;align-items:center;z-index:40;box-shadow:0 14px 40px rgba(15,23,42,.35)}
+.pc{padding:18px;margin:16px 0}
+.pc-row{display:grid;grid-template-columns:150px 1fr auto;gap:12px;align-items:center;padding:8px 6px;border-radius:12px;cursor:pointer}
+.pc-row:hover{background:var(--bg2)}.pc-row.hl{background:var(--pl)}
+.pc-bar{height:10px;background:var(--bd);border-radius:99px;overflow:hidden}.pc-bar i{display:block;height:100%;background:var(--p);border-radius:99px}
+.pc-row.best .pc-bar i{background:var(--ok)}
+@media(max-width:640px){.pc-row{grid-template-columns:1fr auto}.pc-row .pc-bar{grid-column:1/-1;order:3}}
+.tbl{width:100%;border-collapse:collapse;font-size:14px}
+.tbl th,.tbl td{padding:12px 14px;border-bottom:1px solid var(--bd);text-align:start;vertical-align:middle}
+.tbl th{background:var(--bg2);color:var(--tx2);font-weight:600;white-space:nowrap}
+.tbl td.best{background:var(--okl);font-weight:700}
+.scroll-x{overflow-x:auto;border:1px solid var(--bd);border-radius:16px}
+.det{display:grid;grid-template-columns:.9fr 1.1fr;gap:28px;align-items:start}
+@media(max-width:860px){.det{grid-template-columns:1fr}}
+.det-img{background:linear-gradient(160deg,var(--bg2),#EEF2FF);border-radius:24px;height:380px;display:grid;place-items:center;border:1px solid var(--bd);position:relative}.det-img svg.ph{height:300px}.det-img img{max-height:340px;border-radius:14px}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}.kv div{background:var(--bg2);border:1px solid var(--bd);border-radius:12px;padding:10px 14px}.kv small{display:block;color:var(--tx2);font-size:12px}
+.vlevels{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.vl{display:flex;gap:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:12px;font-size:14px;align-items:flex-start}
+.vl.on{background:var(--pl);border-color:#93c5fd}.vl.off{opacity:.55}
+.vl .ic{margin-top:3px}
+.callout{background:var(--warnl);border:1px solid #FDE68A;color:#78350F;border-radius:12px;padding:10px 14px;font-size:13px;margin-top:12px}
+.sbox{padding:16px;display:flex;gap:12px;align-items:center;margin:14px 0}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin:18px 0}
+.stat{padding:16px}.stat b{font-size:28px;display:block}.stat span{color:var(--tx2);font-size:14px}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--bd);margin:16px 0}
+.tabs button{padding:10px 16px;font-weight:600;color:var(--tx2);border-bottom:2px solid transparent;margin-bottom:-1px}.tabs button.on{color:var(--p);border-color:var(--p)}
+.empty{text-align:center;padding:44px 20px;color:var(--tx2)}
+.empty .ico-b{margin:0 auto 12px}
+.tbl input,.tbl select,.form input,.form select,.form textarea{border:1px solid var(--bd);border-radius:10px;padding:8px 10px;background:#fff;width:100%;outline:none}
+.tbl input[type=number]{width:110px}.tbl select{width:auto}
+.form input:focus,.form select:focus,.form textarea:focus{border-color:var(--p);box-shadow:0 0 0 3px var(--pl)}
+.form{display:grid;gap:12px}.form label{display:flex;flex-direction:column;gap:4px;font-size:14px;font-weight:500}
+.form .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.rq{color:var(--red)}.hnt{display:block;font-size:12px;color:var(--tx2);font-weight:400}
+.lnk{color:var(--p);text-decoration:underline;font-weight:600}
+.stepper{display:flex;gap:6px;margin:0 0 20px;overflow-x:auto}
+.stepper .st{flex:1;min-width:84px;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px;color:var(--tx2);text-align:center}
+.stepper .st i{width:30px;height:30px;border-radius:50%;border:2px solid var(--bd);display:grid;place-items:center;font-style:normal;font-weight:700;background:#fff}
+.stepper .st.on{color:var(--p);font-weight:600}.stepper .st.on i{border-color:var(--p);background:var(--pl);color:var(--pd)}
+.stepper .st.done i{background:var(--ok);border-color:var(--ok);color:#fff}
+.upl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1.5px dashed var(--bd);border-radius:14px;padding:10px 14px;background:var(--bg2)}
+.upl .fn{font-size:13px;color:var(--tx2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pwt{position:absolute;inset-inline-end:8px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--p);font-weight:600;padding:4px 8px}
+.err-box{background:#FEF2F2;border:1px solid #FECACA;color:#991B1B;border-radius:12px;padding:10px 14px;font-size:14px}.err-box ul{margin:0 18px}
+.err-txt{color:var(--red);font-size:14px;min-height:20px}
+.tag.rej{background:#FEE2E2;border-color:#FECACA;color:#991B1B}
+.chkl{flex-direction:row!important;align-items:flex-start;gap:8px!important;font-weight:400!important}.chkl input{width:auto!important;margin-top:6px}
+.form .two>label{min-width:0}
+@media(max-width:560px){.form .two{grid-template-columns:1fr}}
+.slots{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.slot{display:flex;gap:12px;border:1.5px dashed var(--bd);border-radius:14px;padding:10px;background:var(--bg2);align-items:center}
+.slot.has{border-style:solid;border-color:#86efac;background:#f0fdf4}
+.slot-img{width:84px;height:84px;border-radius:12px;background:#fff;border:1px solid var(--bd);display:grid;place-items:center;overflow:hidden;flex:none;color:var(--tx2)}
+.slot-img img{width:100%;height:100%;object-fit:cover}
+.gal{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.gal img{width:64px;height:64px;object-fit:cover;border-radius:12px;border:2px solid var(--bd);cursor:pointer}.gal img:hover{border-color:var(--p)}
+/* modal / toast */
+#modal{position:fixed;inset:0;z-index:100;display:none;background:rgba(15,23,42,.45);backdrop-filter:blur(3px);padding:20px;overflow:auto}
+#modal.on{display:grid;place-items:center}
+.mbox{background:#fff;border-radius:22px;max-width:520px;width:100%;padding:24px;box-shadow:0 30px 80px rgba(15,23,42,.35);animation:pop .25s both;max-height:92vh;overflow:auto}
+.mbox h2{font-size:22px;margin-bottom:4px}
+.roles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+.role{border:1.5px solid var(--bd);border-radius:14px;padding:12px;text-align:start}.role.on{border-color:var(--p);background:var(--pl)}.role small{display:block;color:var(--tx2)}
+#toast{position:fixed;bottom:24px;inset-inline:0;margin:auto;width:max-content;max-width:92vw;background:var(--tx);color:#fff;padding:12px 20px;border-radius:14px;z-index:200;opacity:0;pointer-events:none;transition:.3s;transform:translateY(10px)}
+#toast.on{opacity:1;transform:none}
+footer{border-top:1px solid var(--bd);background:var(--bg2);padding:26px 0;color:var(--tx2);font-size:14px}
+footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div id="demo-bar"></div>
+<header id="hdr"></header>
+<main id="app"></main>
+<footer><div class="wrap"><div><b style="color:var(--tx)">دورلي</b> — نسخة تجريبية. الأجهزة والأسعار والبائعين المعروضين بيانات عينة لغرض العرض فقط.</div><div>التحقق بيغطي بس اللي مكتوب قدامه — مفيش ضمان لأصالة الجهاز أو خلوّه من البلاغات إلا بفحص معتمد.</div></div></footer>
+<div id="modal" onclick="if(event.target===this)closeModal()"></div>
+<div id="toast"></div>
+
+<script src="public/images/iphones/iphones.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="assets/dorly-cloud.js"></script>
+<script>
+/* =========================================================
+   Utilities, icons, data
+   ========================================================= */
+const $=(s,r=document)=>r.querySelector(s);
+const fmt=n=>Number(n).toLocaleString('en-US');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const toEn=s=>String(s).replace(/[٠-٩]/g,d=>d.charCodeAt(0)-1632).replace(/[۰-۹]/g,d=>d.charCodeAt(0)-1776);
+const LS={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){try{localStorage.setItem(k,JSON.stringify(v,(kk,vv)=>(kk==='photos'||kk==='pubPhotos'||kk==='shots')?undefined:vv));LS.lossy=true}catch(e2){}}}};
+const IC={
+bag:'<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>',
+phone:'<rect x="5" y="2" width="14" height="20" rx="3"/><path d="M12 18h.01"/>',
+repeat:'<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+send:'<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
+x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',minus:'<path d="M5 12h14"/>',plus:'<path d="M12 5v14M5 12h14"/>',
+check:'<path d="M20 6 9 17l-5-5"/>',
+shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+pin:'<path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
+search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+user:'<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
+battery:'<rect x="2" y="7" width="16" height="10" rx="2"/><path d="M22 11v2"/>',
+back:'<path d="m9 18 6-6-6-6"/>',
+edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+restart:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/>',
+spark:'<path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 3v4M17 5h4"/>',
+bot:'<rect x="3" y="8" width="18" height="12" rx="3"/><path d="M12 8V5"/><circle cx="12" cy="4" r="1"/><path d="M9 14h.01M15 14h.01"/>',
+store:'<path d="M3 9l1-5h16l1 5"/><path d="M4 9v11h16V9"/><path d="M9 20v-6h6v6"/>',
+msg:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+trash:'<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>',
+scale:'<path d="M12 3v18M5 7h14M5 7l-3 8a4 4 0 0 0 6 0zM19 7l-3 8a4 4 0 0 0 6 0z"/>',
+lock:'<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
+};
+const I=(n,s=20)=>`<svg class="ic" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
+const TODAY='22 نوفمبر 2026';
+const MODELS=[11,12,13,14,15,16,17];
+const COND={excellent:{t:'ممتاز',r:3},vgood:{t:'جيد جداً',r:2},good:{t:'جيد',r:1}};
+const VER=[null,
+ {t:'إفصاح البائع',d:'المعلومات دي كتبها البائع بنفسه ومفيش مراجعة ليها.'},
+ {t:'البيانات متراجعة',d:'تفاصيل الإعلان اتراجعت مع الإثباتات اللي البائع رفعها.'},
+ {t:'الجهاز تم اختباره',d:'وظايف الجهاز الأساسية اتجربت فعلياً.'},
+ {t:'فحص فني',d:'الجهاز اتفحص فنياً بواسطة فني متخصص.'}];
+const CHECKS={3:['اللمس والشاشة','الكاميرات','الصوت والمايك','الشحن','الواي فاي والشبكة'],4:['اللمس والشاشة','الكاميرات','الصوت والمايك','الشحن','الواي فاي والشبكة','قراءة صحة البطارية من النظام','فحص مظهر الجسم والخدوش']};
+const BADGES={phone:'رقم الهاتف متحقق منه',identity:'هوية البائع متحققة',merchant:'تاجر موثّق',trusted:'بائع موثوق'};
+const COL={'أسود':'#1f2937','أبيض':'#e5e7eb','أزرق':'#60a5fa','وردي':'#f9a8d4','أخضر':'#86efac','بنفسجي':'#c4b5fd','ذهبي':'#fcd34d','تيتانيوم':'#a8a29e','برتقالي':'#fb923c'};
+const STORAGES=['128GB','256GB','512GB','1TB'];
+/* Full iPhone line-up for the "add device" form: [gen, label, editions, storage sizes] */
+const ALL_MODELS=(()=>{const S=s=>s.split(' ').map(x=>/T$/.test(x)?x+'B':x+'GB');return [
+ ['2G','iPhone (الجيل الأول)',[],S('4 8 16')],['3G','iPhone 3G',[],S('8 16')],['3GS','iPhone 3GS',[],S('8 16 32')],
+ ['4','iPhone 4',[],S('8 16 32')],['4S','iPhone 4S',[],S('8 16 32 64')],
+ ['5','iPhone 5',[],S('16 32 64')],['5c','iPhone 5c',[],S('8 16 32')],['5s','iPhone 5s',[],S('16 32 64')],
+ ['6','iPhone 6',['Plus'],S('16 32 64 128')],['6s','iPhone 6s',['Plus'],S('16 32 64 128')],
+ ['SE','iPhone SE',[['2016','الجيل الأول (2016)'],['2020','الجيل التاني (2020)'],['2022','الجيل التالت (2022)']],S('16 32 64 128 256')],
+ ['7','iPhone 7',['Plus'],S('32 128 256')],['8','iPhone 8',['Plus'],S('64 128 256')],
+ ['X','iPhone X',[],S('64 256')],['XR','iPhone XR',[],S('64 128 256')],['XS','iPhone XS',['Max'],S('64 256 512')],
+ ['11','iPhone 11',['Pro','Pro Max'],S('64 128 256 512')],
+ ['12','iPhone 12',['mini','Pro','Pro Max'],S('64 128 256 512')],
+ ['13','iPhone 13',['mini','Pro','Pro Max'],S('128 256 512 1T')],
+ ['14','iPhone 14',['Plus','Pro','Pro Max'],S('128 256 512 1T')],
+ ['15','iPhone 15',['Plus','Pro','Pro Max'],S('128 256 512 1T')],
+ ['16','iPhone 16',['Plus','Pro','Pro Max'],S('128 256 512 1T')],['16e','iPhone 16e',[],S('128 256 512')],
+ ['17','iPhone 17',['Pro','Pro Max'],S('256 512 1T 2T')],['Air','iPhone Air',[],S('256 512 1T')],['17e','iPhone 17e',[],S('256 512')]
+].map(m=>({g:m[0],l:m[1],v:m[2].map(x=>Array.isArray(x)?x:[x,x]),s:m[3]}))})();
+const modelOf=g=>ALL_MODELS.find(m=>m.g===String(g));
+
+function seed(){
+ const sellers=[
+  {id:'m1',name:'تك زون',type:'merchant',city:'القاهرة – وسط البلد',badges:['phone','merchant','trusted'],since:'2023'},
+  {id:'m2',name:'موبايل هاوس',type:'merchant',city:'الإسكندرية – سموحة',badges:['phone','merchant'],since:'2024'},
+  {id:'m3',name:'الأمل للموبايلات',type:'merchant',city:'الجيزة – فيصل',badges:['phone'],since:'2025'},
+  {id:'i1',name:'أحمد م.',type:'individual',city:'القاهرة – مدينة نصر',badges:['phone','identity'],since:'2025'},
+  {id:'i2',name:'سارة ع.',type:'individual',city:'الجيزة – الدقي',badges:['phone'],since:'2026'},
+  {id:'i3',name:'محمود ك.',type:'individual',city:'المنصورة',badges:['phone','identity','trusted'],since:'2024'},
+  {id:'i4',name:'خالد ر.',type:'individual',city:'القاهرة – المعادي',badges:['phone'],since:'2026'},
+  {id:'i5',name:'ياسمين ح.',type:'individual',city:'الإسكندرية – سيدي جابر',badges:['phone','identity'],since:'2025'},
+  {id:'u_ind',name:'حسابك (فرد)',type:'individual',city:'القاهرة',badges:['phone'],since:'2026'}
+ ];
+ const RAW=[
+ [11,'','128GB',84,'good',11800,'i1',1,'أبيض'],[11,'','128GB',87,'vgood',12500,'m3',2,'أسود'],[11,'','128GB',80,'good',11500,'m2',3,'أسود'],[11,'','256GB',82,'good',13500,'m2',3,'أخضر'],
+ [12,'','128GB',86,'vgood',15900,'m1',4,'أزرق'],[12,'','128GB',81,'good',15000,'i2',1,'أسود'],[12,'','128GB',83,'good',14800,'m3',2,'أخضر'],[12,'','256GB',89,'excellent',18200,'m2',3,'أبيض'],
+ [13,'','128GB',91,'excellent',18500,'m1',4,'وردي'],[13,'','128GB',88,'vgood',19000,'m2',3,'أزرق'],[13,'','128GB',85,'good',17900,'i3',2,'أسود'],
+ [13,'','256GB',90,'excellent',21500,'m1',4,'أبيض'],[13,'','256GB',86,'vgood',20500,'m3',2,'أزرق'],[13,'Pro','256GB',87,'vgood',26500,'m1',3,'أزرق'],
+ [14,'','128GB',92,'excellent',25500,'m1',4,'أسود'],[14,'','128GB',89,'vgood',24500,'m3',2,'أزرق'],[14,'','128GB',90,'vgood',25200,'i4',2,'أبيض'],[14,'','256GB',90,'vgood',28000,'m2',3,'بنفسجي'],
+ [14,'Pro','256GB',93,'excellent',37500,'m1',4,'أسود'],[14,'Pro','128GB',88,'vgood',34500,'m3',2,'ذهبي'],
+ [15,'','128GB',95,'excellent',34500,'m1',4,'أسود'],[15,'','128GB',91,'vgood',32900,'i4',2,'وردي'],[15,'','256GB',94,'excellent',38500,'m2',3,'أزرق'],[15,'','512GB',93,'vgood',41500,'m3',2,'أسود'],
+ [15,'Pro','256GB',96,'excellent',49500,'m1',4,'تيتانيوم'],[15,'Pro Max','512GB',92,'vgood',57000,'m2',3,'تيتانيوم'],[15,'Pro Max','1TB',90,'vgood',62000,'m1',3,'تيتانيوم'],
+ [16,'','128GB',97,'excellent',43500,'m1',4,'أسود'],[16,'','128GB',94,'vgood',41500,'i5',2,'أبيض'],[16,'','256GB',96,'excellent',48000,'m2',3,'أخضر'],[16,'Pro','256GB',98,'excellent',62000,'m1',4,'تيتانيوم'],
+ [17,'','256GB',99,'excellent',63500,'m1',4,'أسود'],[17,'','256GB',98,'excellent',61500,'m2',3,'أبيض'],[17,'Pro','256GB',99,'excellent',79000,'m1',3,'برتقالي']
+ ];
+ const listings=RAW.map((r,i)=>({id:'L'+i,gen:r[0],variant:r[1],storage:r[2],battery:r[3],cond:r[4],price:r[5],seller:r[6],level:r[7],color:r[8],status:'active',sample:true,
+   insp:r[7]===4?'14 نوفمبر 2026':r[7]===3?'18 نوفمبر 2026':null,parts:r[4]==='excellent'?'مفيش قطع متغيرة حسب إفصاح البائع':'حسب إفصاح البائع',defects:r[4]==='good'?'خدوش بسيطة على الإطار':'مفيش عيوب ظاهرة',date:'نوفمبر 2026'}));
+ listings.push({id:'LP1',gen:13,variant:'',storage:'128GB',battery:86,cond:'vgood',price:18200,seller:'i2',level:1,color:'أسود',status:'pending',sample:true,insp:null,parts:'بطارية اتغيرت',defects:'خدوش بسيطة',date:'نوفمبر 2026'});
+ listings.push({id:'LP2',gen:14,variant:'Pro',storage:'256GB',battery:91,cond:'excellent',price:36800,seller:'m3',level:1,color:'بنفسجي',status:'pending',sample:true,insp:null,parts:'مفيش',defects:'مفيش',date:'نوفمبر 2026'});
+ const inquiries=[
+  {id:'Q1',seller:'m1',listing:'L8',name:'كريم س.',phone:'01XXXXXXXXX',msg:'الجهاز لسه متاح؟ ينفع أعاينه النهارده؟',time:'اليوم 14:20',status:'new',sample:true},
+  {id:'Q2',seller:'m1',listing:'L24',name:'منى ف.',phone:'01XXXXXXXXX',msg:'فيه تقسيط؟',time:'امبارح 19:05',status:'new',sample:true},
+  {id:'Q3',seller:'m2',listing:'L9',name:'عمرو ط.',phone:'01XXXXXXXXX',msg:'آخر سعر كام؟',time:'امبارح 11:40',status:'read',sample:true}];
+ const complaints=[
+  {id:'C1',against:'m3',by:'عميل',text:'حالة الشاشة مختلفة عن وصف الإعلان.',status:'open',sample:true},
+  {id:'C2',against:'i2',by:'عميل',text:'البائعة مبتردش على الرسايل.',status:'open',sample:true}];
+ return {sellers,listings,inquiries,complaints};
+}
+function seedVerifs(){const mk=(id,sl,k,st,docs)=>({id,seller:sl,kind:k,docs:docs.map(x=>({label:x,name:'—'})),status:st,reason:'',time:'نوفمبر 2026',sample:true});const M=['السجل التجاري','البطاقة الضريبية','صورة المحل'];return [mk('V1','m1','merchant','approved',M),mk('V2','m2','merchant','approved',M),mk('V3','m3','merchant','pending',M),mk('V4','i1','identity','approved',['البطاقة (وش)','البطاقة (ضهر)','سيلفي']),mk('V5','i2','identity','pending',['البطاقة (وش)','البطاقة (ضهر)','سيلفي بالبطاقة'])]}
+/* Data now lives in Supabase (assets/dorly-cloud.js). seed() above is only kept as the source of the sample rows. */
+let DB={sellers:[],listings:[],inquiries:[],complaints:[],verifs:[],users:[],audit:[]};
+let DEMO=LS.get('dorly_demo',true);
+let USER=null;
+const save=()=>Cloud.sync(DB);
+Cloud.onReload=db=>{DB=db;setSession();NOSCROLL=true;route()};
+const USERS={customer:{name:'عميل تجريبي',role:'customer'},individual:{name:'حسابك (فرد)',role:'individual',sellerId:'u_ind'},merchant:{name:'تك زون',role:'merchant',sellerId:'m1'},admin:{name:'مدير المنصة',role:'admin'}};
+const ROLE_T={customer:'عميل',individual:'فرد بائع',merchant:'تاجر',admin:'أدمن'};
+
+const nm=l=>`iPhone ${l.gen}${l.variant?' '+l.variant:''}`;
+const sel=id=>DB.sellers.find(s=>s.id===id)||{id,name:'—',type:'individual',city:'',badges:[]};
+const pub=l=>l.status==='active'&&(DEMO||!l.sample);
+const isVer=s=>s.badges.some(b=>['merchant','trusted','identity'].includes(b));
+const topBadge=s=>['merchant','trusted','identity','phone'].find(b=>s.badges.includes(b));
+const sScore=l=>{const s=sel(l.seller);return s.badges.length*2+(s.badges.includes('merchant')?2:0)+l.level};
+const sType=s=>s.type==='merchant'?'تاجر':'فرد';
+const byId=id=>DB.listings.find(l=>l.id===id);
+
+/* Local iPhone image library (built by tools/iphone-images). Only entries with imageStatus==='ok'
+   (valid file + licence/attribution record) are used; otherwise the existing drawing is the fallback. */
+const CAT={base:'',m:{}};
+function catId(l){const v=(l.variant||'').toLowerCase().trim().replace(/\s+/g,'-');return 'iphone-'+String(l.gen).toLowerCase()+(v?'-'+v:'')}
+function catImg(l){const e=CAT.m[catId(l)];return e?{src:CAT.base+e.imagePath.replace(/^\//,''),color:e.imageColor||''}:null}
+function catLoad(j){(j.models||[]).forEach(x=>{if(x.imageStatus==='ok'&&x.imagePath)CAT.m[x.id]=x})}
+if(window.IPHONE_CATALOG){catLoad(window.IPHONE_CATALOG);CAT.base='public/'}
+else (async function loadCatalog(){
+ for(const base of ['public/images/iphones/','/images/iphones/']){
+  try{const r=await fetch(base+'iphones.json',{cache:'no-cache'});if(!r.ok)continue;const j=await r.json();catLoad(j);
+   CAT.base=base.replace(/images\/iphones\/$/,'');
+   if(Object.keys(CAT.m).length){NOSCROLL=true;route()}return}catch(e){}
+ }
+})();
+function phone(l){
+ const _ph=lphotos(l);if(_ph.length)return `<img src="${_ph[0]}" alt="">`;
+ const _cat=catImg(l);if(_cat){const d=_cat.color&&l.color&&_cat.color!==l.color;return `<img src="${_cat.src}" alt="${nm(l)}" style="object-fit:contain${d?';height:122px;margin-bottom:22px':''}">${d?`<span style="position:absolute;bottom:6px;inset-inline:6px;text-align:center;font-size:11px;background:rgba(255,255,255,.88);border-radius:8px;padding:2px 6px;color:#475569">صورة توضيحية — لون الجهاز: ${esc(l.color)}</span>`:''}`}
+ const c=COL[l.color]||'#94a3b8',pro=/Pro/.test(l.variant||'');
+ const cams=pro?`<circle cx="33" cy="28" r="6.5" fill="#0F172A" stroke="#64748b"/><circle cx="49" cy="28" r="6.5" fill="#0F172A" stroke="#64748b"/><circle cx="41" cy="43" r="6.5" fill="#0F172A" stroke="#64748b"/>`:`<circle cx="33" cy="26" r="7" fill="#0F172A" stroke="#64748b"/><circle cx="33" cy="42" r="7" fill="#0F172A" stroke="#64748b"/>`;
+ return `<svg viewBox="0 0 120 200" class="ph" aria-hidden="true"><defs><linearGradient id="g${l.id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity=".7"/></linearGradient></defs><rect x="10" y="4" width="100" height="192" rx="22" fill="url(#g${l.id})" stroke="rgba(15,23,42,.15)" stroke-width="2"/><rect x="20" y="14" width="${pro?44:38}" height="${pro?44:38}" rx="12" fill="rgba(15,23,42,.18)"/>${cams}</svg>`;
+}
+
+/* =========================================================
+   Backend stand-in (what real server functions would do)
+   The AI layer may only recommend what these return.
+   ========================================================= */
+const Backend={
+ live(){return DB.listings.filter(pub)},
+ marketEstimate(gen,storage){
+  const a=this.live().filter(l=>l.gen===gen&&l.variant===''&&l.storage===storage).map(l=>l.price).sort((x,y)=>x-y);
+  if(a.length<2)return null;
+  const m=a.length%2?a[(a.length-1)/2]:Math.round((a[a.length/2-1]+a[a.length/2])/2);
+  return {est:m,n:a.length,min:a[0],max:a[a.length-1]};
+ },
+ relaxedSearch(c0){
+  const c=Object.assign({},c0),notes=[];
+  const test=cr=>this.live().filter(l=>(!cr.gen||l.gen===cr.gen)&&(cr.variant==null||l.variant===cr.variant)&&(!cr.storage||l.storage===cr.storage)&&l.price<=cr.max&&(!cr.cond||COND[l.cond].r>=cr.cond)&&l.battery>=cr.bat&&(!cr.seller||sel(l.seller).type===cr.seller));
+  const steps=[
+   [()=>{if(c.bat)c.bat=0},'خففت شرط البطارية'],
+   [()=>{if(c.cond)c.cond=0},'خففت شرط الحالة'],
+   [()=>{if(c.max<1e9)c.max=Math.round(c.max*1.15)},'زوّدت الميزانية 15% تقريباً'],
+   [()=>{c.seller=null},'وسّعت البحث لتجار وأفراد'],
+   [()=>{c.variant=null},'وسّعت البحث لباقي إصدارات الموديل (Pro / Max)'],
+   [()=>{c.storage=null},'وسّعت البحث لسعات تخزين تانية']];
+  let res=test(c);
+  for(const [f,n] of steps){ if(res.length)break; const before=JSON.stringify(c); f(); if(JSON.stringify(c)!==before){notes.push(n);res=test(c)} }
+  res.sort((x,y)=>c0.gen?x.price-y.price:(y.level-x.level||y.battery-x.battery||x.price-y.price));
+  return {res,notes,crit:c};
+ }
+};
+/* AI service layer — swap point for Claude API (server-side only, key from env var) */
+const AIService={mode:'rules',
+ // async interpret(text,state){ return fetch('/api/chat',{method:'POST',body:JSON.stringify({text,state})}).then(r=>r.json()) }
+ interpret(text,ctx){return extract(text,ctx)}
+};
+
+/* =========================================================
+   Cards & shared components
+   ========================================================= */
+function vtag(l){return `<span class="vtag v${l.level}">${I('shield',13)} ${VER[l.level].t}</span>`}
+function sellerBadge(s){const b=topBadge(s);return b?`<span class="tag ${b==='merchant'?'mer':'ok'}">${I('check',12)} ${BADGES[b]}</span>`:`<span class="tag warn">غير موثّق</span>`}
+function card(l,o={}){
+ const s=sel(l.seller);
+ return `<article class="card dev">
+ <div class="dev-img" onclick="go('#/device/${l.id}')" style="cursor:pointer">${phone(l)}${l.sample?'<span class="samp">بيانات عينة</span>':''}
+ ${o.cmp?`<label class="cmpbox" onclick="event.stopPropagation()"><input type="checkbox" ${S.cmp.includes(l.id)?'checked':''} onchange="toggleCmp('${l.id}',this)"> قارن</label>`:''}</div>
+ <div class="dev-body">
+  <div class="dev-top"><h3>${nm(l)}</h3><span class="tag">${l.storage}</span></div>
+  <div class="price">${fmt(l.price)} <small>جنيه</small></div>
+  <div class="meta"><span class="tag">${I('battery',13)} بطارية ${l.battery}%</span><span class="tag">الحالة: ${COND[l.cond].t}</span></div>
+  <div>${vtag(l)}</div>
+  ${o.why&&o.why.length?`<div class="why"><b>ليه رشحته؟</b><ul>${o.why.map(w=>`<li>${w}</li>`).join('')}</ul></div>`:''}
+  <div class="seller-l"><div><a href="#/seller/${s.id}"><b>${esc(s.name)}</b></a> · <span class="tag ${s.type==='merchant'?'mer':''}">${sType(s)}</span></div><div>${sellerBadge(s)}</div><div>${I('pin',13)} ${esc(s.city)}</div></div>
+  <div class="dev-act"><button class="btn ghost sm" onclick="go('#/device/${l.id}')">عرض التفاصيل</button><button class="btn primary sm" onclick="contact('${l.id}')">تواصل مع البائع</button></div>
+ </div></article>`;
+}
+function pcmp(gen,variant,storage,hl){
+ const a=DB.listings.filter(l=>pub(l)&&l.gen===gen&&l.variant===variant&&l.storage===storage).sort((x,y)=>x.price-y.price);
+ const t=`iPhone ${gen}${variant?' '+variant:''} – ${storage}`;
+ if(a.length<2)return `<div class="card pc"><h3>${I('scale')} مقارنة الأسعار – ${t}</h3><p class="mut">مفيش عروض كفاية من نفس الموديل والسعة للمقارنة دلوقتي.</p></div>`;
+ const min=a[0].price,max=a[a.length-1].price;
+ return `<div class="card pc"><h3>${I('scale')} مقارنة الأسعار – ${t}</h3><p class="mut" style="margin-bottom:8px">الفرق بين أرخص وأغلى عرض: <b>${fmt(max-min)} جنيه</b> (${Math.round((max-min)/min*100)}%). السعر الأقل مش دايماً الأفضل — بص على البطارية ومستوى التحقق.</p>
+ ${a.map(l=>{const s=sel(l.seller);return `<div class="pc-row ${l.id===hl?'hl':''} ${l.price===min?'best':''}" onclick="go('#/device/${l.id}')"><div><b>${esc(s.name)}</b><div class="mut" style="font-size:12px">${sType(s)} · بطارية ${l.battery}%</div></div><div class="pc-bar"><i style="width:${Math.round(l.price/max*100)}%"></i></div><div style="text-align:end"><b>${fmt(l.price)}</b> جنيه<div style="font-size:12px;color:${l.price===min?'var(--ok)':'var(--tx2)'}">${l.price===min?'الأرخص':'+'+fmt(l.price-min)+' جنيه'}</div></div></div>`}).join('')}</div>`;
+}
+
+/* =========================================================
+   Chat engine (rule-based, structured state)
+   ========================================================= */
+const FLOWS={buy:['model','storage','budget','condition','battery'],sell:['model','storage','condition','battery','parts','defects','price'],trade:['model','storage','condition','battery','parts','target','diff']};
+const Q={
+ intent:'أهلاً بيك 👋 أنا مساعدك في دورلي، هساعدك تلاقي الآيفون المناسب ليك أو تبيع جهازك أو تبدّله بسهولة. تحب نبدأ بإيه؟',
+ seller:{buy:'تحب تشتري من مين؟',sell:'إنت بتبيع بصفتك إيه؟',trade:'تحب تبدّل مع مين؟'},
+ model:{buy:'إيه الموديل اللي بتدور عليه؟',sell:'معاك أنهي موديل؟',trade:'معاك أنهي آيفون حالياً؟'},
+ storage:{buy:'إيه سعة التخزين المناسبة ليك؟',sell:'سعة التخزين كام؟',trade:'سعة التخزين كام؟'},
+ budget:{buy:'ميزانيتك في حدود كام؟'},
+ condition:{buy:'إيه حالة الجهاز اللي تفضلها؟',sell:'حالة الجهاز إيه؟',trade:'حالة الجهاز إيه؟'},
+ battery:{buy:'تحب الجهاز يكون ببطارية كام في المية على الأقل؟',sell:'صحة البطارية كام؟',trade:'صحة البطارية كام؟'},
+ parts:{sell:'هل الجهاز اتغير فيه أي قطع قبل كده؟',trade:'فيه أي قطع اتغيرت؟'},
+ defects:{sell:'فيه أي عيوب أو خدوش؟'},
+ price:{sell:'محتاج كام في الجهاز؟'},
+ photos:{sell:'ابعت كام صورة للجهاز عشان الإعلان يبقى أوضح 📸 (اختياري)'},
+ target:{trade:'عايز تبدّله بأنهي موديل؟'},
+ diff:{trade:'ممكن تدفع فرق في حدود كام؟'}
+};
+const S={journey:null,seller:null,ans:{},msgs:[],pending:null,typing:false,custom:false,photos:[],acts:[],token:0,cmp:[]};
+const flow=()=>S.journey?['intent','seller',...FLOWS[S.journey]]:['intent'];
+const qText=k=>{const q=Q[k];return typeof q==='string'?q:q[S.journey]};
+
+function optsFor(k){
+ const J=S.journey;
+ switch(k){
+ case 'intent':return [{l:'شراء آيفون',v:'buy',i:'bag',d:'دور على الآيفون المناسب ليك.'},{l:'بيع آيفوني',v:'sell',i:'phone',d:'اعرض جهازك للبيع بسهولة.'},{l:'تبديل آيفوني',v:'trade',i:'repeat',d:'بدّل جهازك بآيفون تاني.'}];
+ case 'seller':return J==='sell'?[{l:'تاجر',v:'merchant',i:'store',d:'عندي محل أو مخزون أجهزة.'},{l:'فرد',v:'individual',i:'user',d:'جهاز واحد بتاعي.'}]
+   :[{l:'تاجر',v:'merchant',i:'store',d:'محلات وتجار موبايلات.'},{l:'فرد',v:'individual',i:'user',d:'أشخاص بيبيعوا أجهزتهم بشكل مباشر.'}];
+ case 'model':return MODELS.map(g=>({l:'iPhone '+g,v:g,x:{variant:''}})).concat(J==='buy'?[{l:'مش محدد، رشحلي أنت',v:'any',x:{variant:''}}]:[]);
+ case 'target':return MODELS.map(g=>({l:'iPhone '+g,v:g}));
+ case 'storage':return STORAGES.map(s=>({l:s,v:s})).concat(J==='buy'?[{l:'مش فارقة',v:'any'}]:[]);
+ case 'budget':return [{l:'أقل من 10,000 جنيه',v:[0,10000]},{l:'10,000 – 15,000 جنيه',v:[10000,15000]},{l:'15,000 – 20,000 جنيه',v:[15000,20000]},{l:'20,000 – 30,000 جنيه',v:[20000,30000]},{l:'أكتر من 30,000 جنيه',v:[30000,1e9]},{l:'إدخال مبلغ مخصص',custom:true}];
+ case 'condition':return [{l:'ممتاز',v:'excellent'},{l:'جيد جداً',v:'vgood'},{l:'جيد',v:'good'}].concat(J==='buy'?[{l:'مش فارقة، المهم السعر',v:'any'}]:[]);
+ case 'battery':return J==='buy'?[{l:'90%+',v:90},{l:'85%+',v:85},{l:'80%+',v:80},{l:'مش شرط',v:0}]:[{l:'90% أو أكتر',v:93},{l:'85 – 89%',v:87},{l:'80 – 84%',v:82},{l:'أقل من 80%',v:75},{l:'أكتب الرقم',custom:true}];
+ case 'parts':return [{l:'لا، كله أصلي',v:'none'},{l:'الشاشة',v:'screen'},{l:'البطارية',v:'battery'},{l:'قطع تانية',v:'other'}];
+ case 'defects':return [{l:'مفيش، زي الجديد',v:'none'},{l:'خدوش بسيطة',v:'minor'},{l:'خدوش واضحة',v:'major'},{l:'كسر أو عيب في الشاشة/الجسم',v:'broken'}];
+ case 'price':{const e=S.ans.model&&S.ans.storage?Backend.marketEstimate(S.ans.model.v,S.ans.storage.v):null;
+   return (e?[{l:'حوالي '+fmt(e.est)+' جنيه (متوسط المعروض)',v:e.est}]:[]).concat([{l:'أكتب السعر',custom:true}])}
+ case 'diff':return [{l:'من غير فرق',v:0},{l:'لحد 3,000 جنيه',v:3000},{l:'لحد 5,000 جنيه',v:5000},{l:'لحد 10,000 جنيه',v:10000},{l:'مبلغ تاني',custom:true}];
+ }
+ return [];
+}
+const CUSTOM_Q={budget:'اكتب ميزانيتك بالجنيه (مثلاً 18000 أو 18 ألف) 👇',battery:'اكتب نسبة البطارية (مثلاً 88) 👇',price:'اكتب السعر اللي عايزه بالجنيه (مثلاً 17500) 👇',diff:'اكتب أقصى فرق تقدر تدفعه بالجنيه 👇'};
+const STEP_ICON={intent:'bag',seller:'store'};
+
+async function say(html,step,delay){
+ const tk=S.token;S.typing=true;renderChat();
+ await sleep(delay||Math.min(1300,450+html.length*7));
+ if(tk!==S.token)return false;
+ S.typing=false;S.msgs.push({from:'bot',html,step});renderChat();return true;
+}
+async function pushMsg(m,delay){
+ const tk=S.token;S.typing=true;renderChat();await sleep(delay||500);
+ if(tk!==S.token)return false;S.typing=false;S.msgs.push(Object.assign({from:'bot'},m));renderChat();return true;
+}
+async function ask(k){
+ const tk=S.token;S.pending=null;
+ if(!await say(esc(qText(k)),k))return;
+ if(tk!==S.token)return;
+ S.pending=k;S.custom=false;renderChat();
+ const inp=$('#cin');if(inp&&!S.typing)inp.focus({preventScroll:true});
+}
+function next(){const k=flow().find(k=>!S.ans[k]);if(k)ask(k);else finish()}
+function resetChat(){Object.assign(S,{journey:null,seller:null,ans:{},msgs:[],pending:null,typing:false,custom:false,photos:[],acts:[]});S.token++}
+function restart(){resetChat();ask('intent')}
+function startFlow(j){
+ resetChat();
+ if(!j){ask('intent');return}
+ const o=optsFor('intent').find(x=>x.v===j);
+ S.msgs.push({from:'bot',html:esc(Q.intent),step:'intent',shown:true});
+ S.msgs.push({from:'user',step:'intent',text:o.l});
+ S.journey=j;S.ans.intent={l:o.l,v:j};renderChat();next();
+}
+function answer(k,label,v,extra){
+ if(S.typing||S.pending!==k)return;
+ S.msgs.push({from:'user',step:k,text:label});
+ S.ans[k]=Object.assign({l:label,v},extra||{});S.pending=null;S.custom=false;
+ if(k==='intent')S.journey=v;
+ if(k==='seller')S.seller=v;
+ renderChat();next();
+}
+async function pickOpt(i){
+ const k=S.pending;if(!k||S.typing)return;const o=optsFor(k)[i];if(!o)return;
+ if(o.custom){S.msgs.push({from:'user',text:o.l});S.custom=true;const tk=S.token;S.pending=null;await say(CUSTOM_Q[k]);if(tk!==S.token)return;S.pending=k;renderChat();const inp=$('#cin');inp&&inp.focus();return}
+ answer(k,o.l,o.v,o.x);
+}
+function cancelCustom(){S.custom=false;renderChat()}
+function editStep(k){
+ if(S.typing)return;
+ if(k==='intent'){restart();return}
+ const i=S.msgs.findIndex(m=>m.from==='bot'&&m.step===k);if(i<0)return;
+ S.msgs.length=i;const fl=flow();fl.slice(fl.indexOf(k)).forEach(x=>delete S.ans[x]);
+ if(k==='seller')S.seller=null;
+ S.token++;S.typing=false;S.custom=false;S.pending=null;S.acts=[];ask(k);
+}
+function goBack(){
+ if(S.typing)return;const fl=flow();const done=fl.filter(k=>S.ans[k]);
+ if(!done.length){return}
+ editStep(done[done.length-1]);
+}
+function act(i){const a=S.acts[i];if(a)a.f()}
+
+/* ---- free-text understanding (Egyptian Arabic) ---- */
+function parseNum(t,thousandsHint){
+ t=toEn(t).replace(/[,،]/g,'');
+ let m=t.match(/(\d+(?:\.\d+)?)\s*(الف|ألف|آلاف|ك|k)/i);if(m)return Math.round(parseFloat(m[1])*1000);
+ m=t.match(/\d+(?:\.\d+)?/);if(!m)return null;let n=Math.round(parseFloat(m[0]));
+ if(thousandsHint&&n>0&&n<1000)n*=1000;return n;
+}
+function extract(t,pending){
+ const x=toEn(t).replace(/[,،]/g,'');const o={gens:[]};
+ o.gens=[...x.matchAll(/(?<!\d)(1[1-7])(?!\d)/g)].map(m=>+m[1]);
+ if(/برو\s*ماكس|pro\s*max/i.test(x))o.variant='Pro Max';else if(/برو|pro/i.test(x))o.variant='Pro';
+ const st=x.match(/(?<!\d)(128|256|512)(?!\d)/);if(st)o.storage=st[1]+'GB';else if(/(1\s*tb|تيرا)/i.test(x))o.storage='1TB';
+ let b=x.match(/بطاري\S*\s*(\d{2,3})/)||x.match(/(\d{2,3})\s*%/);if(b&&+b[1]>=40&&+b[1]<=100)o.battery=+b[1];
+ else if(pending==='battery'){const n=parseNum(x);if(n&&n>=40&&n<=100)o.battery=n}
+ if(/جيد\s*جد/.test(x))o.cond='vgood';else if(/ممتاز|زيرو|نضيف جد/.test(x))o.cond='excellent';else if(/جيد|كويس/.test(x))o.cond='good';
+ if(['budget','price','diff'].includes(pending)){const n=parseNum(x,true);if(n!=null)o.money=n}
+ else{const m=x.match(/(\d+(?:\.\d+)?)\s*(الف|ألف|آلاف|k|ك)(?![\u0621-\u064A])/i);if(m)o.money=Math.round(parseFloat(m[1])*1000);
+  else{const nums=[...x.matchAll(/\d{4,6}/g)].map(m=>+m[0]).filter(n=>n>=3000);if(nums.length)o.money=nums[0];}}
+ return o;
+}
+function applyFree(t){
+ const e=AIService.interpret(t,S.pending),J=S.journey,fl=flow(),got={};
+ const set=(k,l,v,x)=>{if(fl.includes(k)&&!S.ans[k]){S.ans[k]=Object.assign({l,v},x||{});got[k]=l}};
+ if(fl.includes('model')){
+  let g=e.gens[0],tg=null;
+  if(J==='trade'){if(e.gens.length>=2){g=e.gens[0];tg=e.gens[1]}else if(S.pending==='target'){tg=e.gens[0];g=null}else if(S.pending!=='model'&&!S.ans.model&&e.gens.length===1&&!S.ans.target){}}
+  if(g)set('model','iPhone '+g+(e.variant?' '+e.variant:''),g,{variant:e.variant||''});
+  if(tg)set('target','iPhone '+tg,tg);
+  if(J==='buy'&&S.pending==='model'&&/رشح|مش محدد|اي موديل/.test(t))set('model','مش محدد، رشحلي أنت','any',{variant:''});
+ }
+ if(e.storage)set('storage',e.storage,e.storage);
+ else if(S.pending==='storage'&&J==='buy'&&/مش فارق|اي سعة/.test(t))set('storage','مش فارقة','any');
+ if(e.battery!=null)set('battery',e.battery+'%',e.battery);
+ if(e.cond)set('condition',COND[e.cond].t,e.cond);
+ if(S.pending==='condition'&&J==='buy'&&/مش فارق|المهم السعر/.test(t))set('condition','مش فارقة','any');
+ if(e.money!=null){
+  const k=J==='buy'?'budget':J==='sell'?'price':'diff';
+  if(k==='budget')set(k,'لحد '+fmt(e.money)+' جنيه',[0,e.money]);else set(k,fmt(e.money)+' جنيه',e.money);
+ }
+ if(!Object.keys(got).length&&['parts','defects'].includes(S.pending))set(S.pending,t,'custom');
+ return got;
+}
+async function onSend(ev){
+ if(ev)ev.preventDefault();
+ const inp=$('#cin');const t=(inp.value||'').trim();if(!t||S.typing)return;inp.value='';
+ const tk=S.token;
+ if(S.pending==='intent'||S.pending==='seller'){
+  const k=S.pending;let v=null;
+  if(k==='intent'){v=/بدل|تبديل|استبدل/.test(t)?'trade':/بيع|ابيع|أبيع|بيع/.test(t)?'sell':/شراء|اشتري|أشتري|عايز|محتاج|دور/.test(t)?'buy':null}
+  else v=/تاجر|محل|معرض/.test(t)?'merchant':/فرد|شخص|حد|مستعمل من/.test(t)?'individual':null;
+  if(v){const o=optsFor(k).find(o=>o.v===v);answer(k,t,v);return}
+  S.msgs.push({from:'user',text:t});await say('مش متأكد فهمتك 😅 اختار من الكروت اللي تحت أو اكتب بشكل أوضح (مثلاً: عايز أشتري آيفون).');return;
+ }
+ if(!S.pending){S.msgs.push({from:'user',text:t});renderChat();return}
+ if(S.custom){
+  const k=S.pending;const n=parseNum(t,k!=='battery');
+  S.msgs.push({from:'user',text:t});
+  if(n==null||(k==='battery'&&(n<40||n>100))){await say('اكتب الرقم بالأرقام من فضلك 🙏');return}
+  S.custom=false;S.msgs.pop();
+  if(k==='budget')answer(k,'لحد '+fmt(n)+' جنيه',[0,n]);else if(k==='battery')answer(k,n+'%',n);else answer(k,fmt(n)+' جنيه',n);
+  return;
+ }
+ if(S.pending==='photos'){S.msgs.push({from:'user',text:t});await say('عشان تبعت صور اضغط على زرار "اختار صور" تحت 👇');return}
+ const got=applyFree(t);const keys=Object.keys(got);
+ S.msgs.push({from:'user',text:t,slots:keys});
+ if(keys.length){S.pending=null;renderChat();if(!await say('تمام ✅ سجلت: '+esc(Object.values(got).join(' · '))))return;if(tk!==S.token)return;next()}
+ else await say('مش فاهم قصدك بالظبط 🤔 اختار من الاختيارات اللي تحت، أو اكتب بشكل تاني (مثلاً: آيفون 13 128 جيجا لحد 18 ألف).');
+}
+
+/* ---- finishing journeys ---- */
+function finish(){S.pending=null;({buy:finishBuy,sell:finishSell,trade:finishTrade})[S.journey]()}
+function whyList(l,c,pool){
+ const w=[],s=sel(l.seller);
+ if(c.max<1e9&&l.price<=c.max)w.push(`سعره ${fmt(l.price)} جنيه جوه ميزانيتك`);
+ const sib=pool.filter(x=>x.gen===l.gen&&x.variant===l.variant&&x.storage===l.storage);
+ if(sib.length>=2&&l.price===Math.min(...sib.map(x=>x.price)))w.push(`أرخص عرض من نفس الموديل والسعة (من ${sib.length} عروض)`);
+ if(c.bat&&l.battery>=c.bat)w.push(`بطاريته ${l.battery}% أعلى من ${c.bat}% اللي طلبتها`);
+ else if(l.battery>=93)w.push(`بطارية قوية (${l.battery}%)`);
+ if(l.level>=3)w.push(`${VER[l.level].t} بتاريخ ${l.insp}`);
+ const b=topBadge(s);if(b&&b!=='phone')w.push(`البائع: ${BADGES[b]}`);
+ return w.slice(0,3);
+}
+async function finishBuy(){
+ const tk=S.token,a=S.ans;
+ const c={gen:a.model.v==='any'?null:a.model.v,variant:a.model.v==='any'?null:(a.model.variant||''),storage:a.storage.v==='any'?null:a.storage.v,max:a.budget.v[1],cond:a.condition.v==='any'?0:COND[a.condition.v].r,bat:a.battery.v,seller:S.seller};
+ if(!await say('ثواني بدوّرلك عند التجار والبائعين… 🔎',null,1100))return;
+ const {res,notes,crit}=Backend.relaxedSearch(c);
+ if(tk!==S.token)return;
+ S.acts=[];
+ if(!res.length){
+  if(!await say(DEMO?'للأسف ملقيتش أجهزة قريبة من طلبك دلوقتي 😕 جرّب تغيّر الموديل أو الميزانية.':'مفيش عروض متاحة دلوقتي (الوضع التجريبي مقفول، فمفيش بيانات عينة). ممكن تبدأ من جديد بعدين.'))return;
+  S.acts=[{l:'عدّل الميزانية',f:()=>editStep('budget')},{l:'ابدأ من جديد',f:restart}];S.pending='done';renderChat();return;
+ }
+ const top=res.slice(0,3),n=res.length;
+ let txt=`لقيتلك ${n} ${n>10?'عرض':n>2?'عروض':n===2?'عرضين':'عرض'} مناسب${n>1?'ين':''} 👇`;
+ if(notes.length)txt+='\nملحوظة: مفيش نتايج بالظبط على مواصفاتك، علشان كده '+notes.join(' و')+'.';
+ if(!await say(esc(txt)))return;
+ const why={};top.forEach(l=>why[l.id]=whyList(l,{max:c.max,bat:crit.bat},res));
+ if(!await pushMsg({kind:'results',ids:top.map(l=>l.id),why}))return;
+ const base=top[0];
+ if(!await say(`دي أفضل ${top.length} ترشيحات. تحب تشوف كل النتائج وتقارن الأسعار بين البائعين؟`))return;
+ const setR=()=>{Object.assign(R,{gen:crit.gen||'',storage:crit.storage||'',seller:crit.seller||'',max:crit.max<1e9?crit.max:'',bat:crit.bat||0,verified:false,sort:'price'})};
+ S.acts=[{l:`عرض كل النتائج (${n})`,pri:1,f:()=>{setR();go('#/results')}},{l:'قارن الأسعار',f:()=>{Object.assign(R,{gen:base.gen,storage:base.storage,seller:'',max:'',bat:0,verified:false,sort:'price'});go('#/results')}},{l:'عدّل الميزانية',f:()=>editStep('budget')},{l:'ابدأ من جديد',f:restart}];
+ S.pending='done';renderChat();
+}
+async function finishSell(){
+ const tk=S.token,a=S.ans;
+ if(!await say('تمام! دي ملخص بيانات إعلانك 👇'))return;
+ const e=Backend.marketEstimate(a.model.v,a.storage.v);
+ const rows=[['الموديل','iPhone '+a.model.v+(a.model.variant?' '+a.model.variant:'')],['سعة التخزين',a.storage.l],['الحالة',a.condition.l],['صحة البطارية',a.battery.l],['القطع المتغيرة',a.parts.l],['العيوب والخدوش',a.defects.l],['السعر المطلوب',fmt(a.price.v)+' جنيه'],['البائع',S.seller==='merchant'?'تاجر':'فرد'],['مستوى التحقق',VER[1].t+' (بيانات من البائع)']];
+ let html=`<table class="sumtab">${rows.map(r=>`<tr><td>${r[0]}</td><td>${esc(r[1])}</td></tr>`).join('')}</table>`;
+ if(!await pushMsg({kind:'html',html}))return;
+ let note;
+ if(e){const diff=a.price.v-e.est;note=`للمعلومية: متوسط المعروض لنفس الموديل والسعة حوالي ${fmt(e.est)} جنيه (من ${e.n} إعلانات، من ${fmt(e.min)} لـ ${fmt(e.max)}). `+(diff>e.est*.12?'سعرك أعلى من المتوسط، ممكن الجهاز ياخد وقت أطول في البيع.':diff<-e.est*.12?'سعرك أقل من المتوسط، يعني هيتباع بسرعة غالباً.':'سعرك قريب من السوق 👌')}
+ else note='مفيش إعلانات كفاية لنفس الموديل والسعة عشان أقدّرلك سعر عادل، فالسعر اللي كتبته هو اللي هيتنشر.';
+ if(!await say(esc(note)))return;
+ if(!await say('باقي خطوة أخيرة وإجبارية: صور الجهاز ولقطات الإعدادات (البطارية ومعلومات الجهاز)، وبعدها الإعلان بيتبعت للمراجعة 📸'))return;
+ S.acts=[{l:'كمّل: الصور ولقطات الإعدادات',pri:1,f:toPublish},{l:'عدّل البيانات',f:()=>editStep('model')},{l:'ابدأ من جديد',f:restart}];S.pending='done';renderChat();
+}
+function myCount(){return DB.listings.filter(l=>l.seller===(USER&&USER.sellerId)&&['active','paused','pending'].includes(l.status)).length}
+function addAnother(){
+ const keep=flow().slice(0,2);Object.keys(S.ans).forEach(k=>{if(!keep.includes(k))delete S.ans[k]});S.photos=[];S.acts=[];
+ S.msgs.push({from:'bot',html:'تمام، نضيف جهاز تاني 👌'});S.pending=null;next();
+}
+async function finishTrade(){
+ const tk=S.token,a=S.ans;
+ if(!await say('ثواني ألاقيلك فرص التبديل المناسبة… 🔄',null,1000))return;
+ const est=Backend.marketEstimate(a.model.v,a.storage.v);
+ let pool=Backend.live().filter(l=>l.gen===a.target.v&&(!S.seller||sel(l.seller).type===S.seller));
+ let widened=false;
+ if(!pool.length){pool=Backend.live().filter(l=>l.gen===a.target.v);widened=!!pool.length}
+ const rows=pool.map(l=>({l,diff:est?l.price-est.est:null}));
+ let within=rows.filter(r=>r.diff==null||r.diff<=a.diff.v);
+ let overNote=false;if(!within.length&&rows.length){within=rows.slice().sort((x,y)=>x.diff-y.diff).slice(0,3);overNote=true}
+ within.sort((x,y)=>(x.diff==null?x.l.price:x.diff)-(y.diff==null?y.l.price:y.diff));
+ S.acts=[];
+ if(!within.length){if(!await say('مفيش دلوقتي عروض متاحة لـ iPhone '+a.target.v+' عشان التبديل. جرّب موديل تاني.'))return;S.acts=[{l:'غيّر الموديل المطلوب',f:()=>editStep('target')},{l:'ابدأ من جديد',f:restart}];S.pending='done';renderChat();return}
+ let txt=`لقيت ${within.length>2?within.length+' فرص':within.length===2?'فرصتين':'فرصة'} تبديل لـ iPhone ${a.target.v} 👇`;
+ if(widened)txt+='\nمفيش بائعين من النوع اللي اخترته، فعرضتلك من الأنواع التانية.';
+ if(overNote)txt+='\nكل الفروق فوق الحد اللي حددته، دي أقرب العروض ليك.';
+ if(!est)txt+='\nومفيش بيانات كفاية عن سعر جهازك الحالي، فمش هقدر أحسب فرق السعر بشكل موثوق — اتفق عليه مع البائع.';
+ if(!await say(esc(txt)))return;
+ if(!await pushMsg({kind:'trade',items:within.slice(0,3).map(r=>({id:r.l.id,diff:r.diff})),est}))return;
+ S.acts=[{l:'عرض كل أجهزة iPhone '+a.target.v,pri:1,f:()=>{Object.assign(R,{gen:a.target.v,storage:'',seller:'',max:'',bat:0,verified:false,sort:'price'});go('#/results')}},{l:'غيّر الموديل المطلوب',f:()=>editStep('target')},{l:'ابدأ من جديد',f:restart}];
+ S.pending='done';renderChat();
+}
+function addPhotos(inp){[...inp.files].slice(0,6).forEach(f=>S.photos.push(URL.createObjectURL(f)));inp.value='';renderChat()}
+function donePhotos(){answer('photos',S.photos.length?S.photos.length+' صور':'من غير صور',S.photos.length)}
+
+/* ---- chat rendering ---- */
+const AV=`<div class="bot-av s">${I('bot',18)}</div>`;
+function tradeCard(it,est){
+ const l=byId(it.id),s=sel(l.seller),a=S.ans;
+ return `<div class="card trade">
+  <div class="box"><b>جهازك الحالي</b><br>iPhone ${a.model.v} · ${a.storage.l}<br>الحالة: ${a.condition.l} · بطارية ${a.battery.l}<br>قطع متغيرة: ${esc(a.parts.l)}</div>
+  <div class="sw">${I('repeat',26)}</div>
+  <div class="box"><b>الجهاز المطلوب</b><br>${nm(l)} · ${l.storage}<br>${COND[l.cond].t} · بطارية ${l.battery}%<br><b>${fmt(l.price)} جنيه</b></div>
+  <div class="box full">${it.diff!=null?`<b>فرق السعر التقديري:</b> ${it.diff>0?'تدفع ~':'تستلم ~'}<b>${fmt(Math.abs(it.diff))} جنيه</b> <span class="mut">— تقدير استرشادي من ${est.n} إعلانات معروضة لجهازك (متوسط ${fmt(est.est)} جنيه)، مش تقييم نهائي.</span>`:`<b>فرق السعر:</b> <span class="mut">مفيش بيانات إعلانات كفاية لحسابه بشكل موثوق.</span>`}</div>
+  <div class="box full"><b>${esc(s.name)}</b> · ${sType(s)} · ${sellerBadge(s)} · ${I('pin',13)} ${esc(s.city)}<div style="margin-top:6px">${vtag(l)}</div></div>
+  <div class="full" style="display:flex;gap:8px"><button class="btn ghost sm" style="flex:1" onclick="go('#/device/${l.id}')">عرض التفاصيل</button><button class="btn primary sm" style="flex:1" onclick="contact('${l.id}','trade')">تواصل لطلب التبديل</button></div></div>`;
+}
+function msgHtml(m){
+ const cls=m.shown?'':' pop';
+ if(m.from==='user'){
+  const ed=(m.step||(m.slots&&m.slots.length))?`<button class="editb" onclick="editStep('${m.step||flow().find(k=>m.slots.includes(k))}')" title="غيّر إجابتك">${I('edit',13)} تعديل</button>`:'';
+  return `<div class="row user${cls}">${ed}<div class="bub">${esc(m.text)}</div></div>`;
+ }
+ if(m.kind==='results')return `<div class="row wide${cls}"><div class="bub"><div class="resgrid">${m.ids.map(id=>card(byId(id),{why:m.why[id]})).join('')}</div></div></div>`;
+ if(m.kind==='trade')return `<div class="row wide${cls}"><div class="bub" style="display:grid;gap:12px">${m.items.map(it=>tradeCard(it,m.est)).join('')}</div></div>`;
+ if(m.kind==='html')return `<div class="row${cls}">${AV}<div class="bub" style="background:none;border:0;padding:0;width:100%">${m.html}</div></div>`;
+ return `<div class="row${cls}">${AV}<div class="bub">${m.html}</div></div>`;
+}
+function widgetHtml(){
+ const k=S.pending;if(!k)return '';
+ if(S.custom)return `<div class="hint">اكتب الرقم في الخانة اللي تحت ⬇️ — أو <button onclick="cancelCustom()">اختار من الاختيارات</button></div>`;
+ if(k==='done')return `<div class="chips">${S.acts.map((a,i)=>`<button class="chip ${a.pri?'pri':''}" onclick="act(${i})">${a.l}</button>`).join('')}</div>`;
+ if(k==='photos')return `${S.photos.length?`<div class="thumbs">${S.photos.map(p=>`<img src="${p}" alt="">`).join('')}</div>`:''}<div class="chips"><label class="chip pri" style="cursor:pointer">${I('image',16)} اختار صور<input type="file" accept="image/*" multiple hidden onchange="addPhotos(this)"></label><button class="chip" onclick="donePhotos()">${S.photos.length?'كمّل':'كمّل من غير صور'}</button></div>`;
+ const o=optsFor(k);
+ if(k==='intent'||k==='seller')return `<div class="opts-cards">${o.map((x,i)=>`<button class="ocard" onclick="pickOpt(${i})"><div class="ico-b">${I(x.i,24)}</div><b>${x.l}</b><span class="d">${x.d}</span></button>`).join('')}</div>`;
+ return `<div class="chips">${o.map((x,i)=>`<button class="chip ${x.custom?'sec':''}" onclick="pickOpt(${i})">${x.l}</button>`).join('')}</div>`;
+}
+function renderChat(){
+ const box=$('#msgs');if(!box)return;
+ box.innerHTML=S.msgs.map(msgHtml).join('')+(S.typing?`<div class="row">${AV}<div class="bub typing"><i></i><i></i><i></i></div></div>`:'')+(!S.typing?widgetHtml():'');
+ S.msgs.forEach(m=>m.shown=true);
+ const fl=flow(),total=S.journey?fl.length:7,done=fl.filter(k=>S.ans[k]).length;
+ const pb=$('#pbar');if(pb){pb.style.width=Math.round(done/total*100)+'%';$('#ptxt').textContent=S.journey?(done>=total?'تم ✅':`السؤال ${done+1} من ${total}`):'ابدأ باختيار اللي محتاجه';}
+ const inp=$('#cin');if(inp)inp.placeholder=S.custom?'اكتب الرقم بالجنيه…':'أو اكتب هنا بكلامك… مثلاً: عايز آيفون 13 128 لحد 18 ألف';
+ box.scrollTo({top:box.scrollHeight,behavior:'smooth'});
+}
+function viewChat(arg){
+ $('#app').innerHTML=`<div class="wrap chat-page"><div class="chat" id="chatbox">
+  <div class="chat-h"><div class="bot-av">${I('bot',22)}</div><div><div class="nm">مساعد دورلي</div><div class="status">متاح يساعدك</div></div><div class="sp"></div>
+   <button class="icbtn" title="تصغير" onclick="$('#chatbox').classList.toggle('min')">${I('minus')}</button><button class="icbtn" title="إغلاق" onclick="go('#/')">${I('x')}</button></div>
+  <div class="chat-prog"><span id="ptxt"></span><div class="bar"><i id="pbar" style="width:0"></i></div>
+   <button class="btn ghost sm" onclick="goBack()">${I('back',14)} رجوع</button><button class="btn ghost sm" onclick="restart()">${I('restart',14)} من جديد</button></div>
+  <div class="chat-body" id="msgs"></div>
+  <form class="chat-in" onsubmit="onSend(event)"><input id="cin" autocomplete="off" aria-label="رسالتك"><button class="send" aria-label="إرسال">${I('send',20)}</button></form></div></div>`;
+ if(arg&&S.journey!==arg)startFlow(arg);
+ else if(!S.msgs.length&&!S.typing)startFlow(null);
+ else renderChat();
+}
+
+/* =========================================================
+   Pages
+   ========================================================= */
+const R={gen:'',storage:'',seller:'',max:'',bat:0,verified:false,sort:'price'};
+let NOSCROLL=false,DT='devices';
+function homeOffers(){
+ const a=DB.listings.filter(pub);
+ const sc=l=>(l.level||1)*30+(l.battery||0)*0.5-l.price/1000;
+ const top=[...a].sort((x,y)=>sc(y)-sc(x)).slice(0,6);
+ if(!top.length)return `<section class="sec"><h2>عروض مقترحة</h2><p class="sub">لسه مفيش عروض منشورة. <button class="lnk" onclick="go('#/publish')">انشر أول إعلان</button></p></section>`;
+ const why=l=>{const w=[];if((l.level||1)>=3)w.push('مستوى تحقق عالي: '+VER[l.level].t);if(l.battery>=85)w.push('بطارية '+l.battery+'%');const min=Math.min(...a.filter(x=>x.gen===l.gen&&x.storage===l.storage).map(x=>x.price));if(l.price===min&&a.filter(x=>x.gen===l.gen&&x.storage===l.storage).length>1)w.push('أرخص عرض لنفس الموديل والسعة');return w};
+ return `<section class="sec"><h2>عروض مقترحة</h2><p class="sub">مختارة من الإعلانات المنشورة حسب مستوى التحقق وصحة البطارية والسعر. <button class="lnk" onclick="go('#/results')">شوف كل الأجهزة</button></p>
+ <div class="grid">${top.map(l=>card(l,{why:why(l)})).join('')}</div></section>`;
+}
+function viewHome(){
+ $('#app').innerHTML=`<div class="wrap">
+ <section class="hero"><div>
+  <span class="pill">${I('spark',14)} مساعد ذكي بالعربي المصري</span>
+  <h1>محتار تشتري آيفون إيه؟ <span class="grad">إحنا ندورلك!</span></h1>
+  <p class="lead">قولنا محتاج إيه، وقارن الأسعار من تجار وبائعين مختلفين في مكان واحد.</p>
+  <div class="cta"><button class="btn primary lg" onclick="go('#/chat')">${I('msg',20)} ابدأ المحادثة</button><button class="btn ghost lg" onclick="go('#/results')">تصفح الأجهزة</button></div>
+  <ul class="mini-trust"><li>${I('check',16)} من غير فورمات معقدة</li><li>${I('check',16)} أسعار من أكتر من بائع</li><li>${I('check',16)} مستويات تحقق واضحة</li></ul></div>
+  <div class="hero-vis"><div class="prev">
+   <div class="prev-h"><div class="bot-av s">${I('bot',18)}</div><div><b>مساعد دورلي</b><div class="status" style="font-size:12px">متاح يساعدك</div></div></div>
+   <div class="b bot" style="animation-delay:.3s">أهلاً بيك 👋 تحب نبدأ بإيه؟</div>
+   <div class="b me" style="animation-delay:1.2s">عايز آيفون 13 128 لحد 19 ألف</div>
+   <div class="b bot" style="animation-delay:2.1s">لقيتلك 3 عروض، أرخصهم 17,900 جنيه 👇</div>
+   <div class="mini" style="animation-delay:3s">${phone({id:'pv',color:'أزرق',variant:''})}<div><b style="font-size:14px">iPhone 13 · 128GB</b><div class="mut" style="font-size:12px">بطارية 85% · جيد</div><b style="color:var(--pd)">17,900 جنيه</b></div></div>
+  </div>
+  <div class="chipf" style="top:6%;inset-inline-start:0;animation-delay:.5s">${I('shield',16)} فحص فني</div>
+  <div class="chipf" style="bottom:8%;inset-inline-end:0;animation-delay:1.5s">${I('scale',16)} قارن الأسعار</div></div></section>
+ <section class="sec"><h2>تعمل إيه النهارده؟</h2><p class="sub">اختار وهنكمّل سوا بأسئلة قصيرة.</p>
+  <div class="grid3">
+   <div class="card svc" onclick="go('#/chat/buy')"><div class="ico-b">${I('bag',24)}</div><h3>شراء آيفون</h3><p class="mut">دور على الآيفون المناسب ليك وقارن الأسعار.</p></div>
+   <div class="card svc" onclick="go('#/chat/sell')"><div class="ico-b">${I('phone',24)}</div><h3>بيع آيفونك</h3><p class="mut">اعرض جهازك للبيع بسهولة، كتاجر أو كفرد.</p></div>
+   <div class="card svc" onclick="go('#/chat/trade')"><div class="ico-b">${I('repeat',24)}</div><h3>تبديل آيفونك</h3><p class="mut">بدّل جهازك بآيفون تاني وشوف الفرق التقديري.</p></div></div></section>
+ ${homeOffers()}
+ <section class="sec"><h2>إزاي دورلي بيشتغل؟</h2><p class="sub">زي ما تكلم صاحبك اللي فاهم في الموبايلات.</p>
+  <div class="grid3"><div class="card svc" style="cursor:default"><span class="step-n">1</span><h3>احكيلنا محتاج إيه</h3><p class="mut">بالاختيارات أو بكلامك العادي بالمصري.</p></div>
+  <div class="card svc" style="cursor:default"><span class="step-n">2</span><h3>نجيبلك العروض</h3><p class="mut">من الإعلانات الموجودة فعلاً بس — مفيش أجهزة أو أسعار متخترعة.</p></div>
+  <div class="card svc" style="cursor:default"><span class="step-n">3</span><h3>قارن وتواصل</h3><p class="mut">قارن بين البائعين وكلّم اللي يريحك.</p></div></div></section>
+ <section class="sec"><h2>الثقة أولاً</h2><p class="sub">كل جهاز عليه مستوى تحقق واضح بيقولك اتراجع إيه فعلاً.</p>
+  <div class="grid3">${[1,2,3,4].map(i=>`<div class="card svc" style="cursor:default"><span class="vtag v${i}">${I('shield',13)} ${VER[i].t}</span><p class="mut" style="margin-top:10px">${VER[i].d}</p></div>`).join('')}</div></section></div>`;
+}
+function filtered(){
+ let a=DB.listings.filter(pub);
+ if(R.gen)a=a.filter(l=>l.gen==R.gen);if(R.storage)a=a.filter(l=>l.storage===R.storage);if(R.seller)a=a.filter(l=>sel(l.seller).type===R.seller);
+ if(R.max)a=a.filter(l=>l.price<=+R.max);if(R.bat)a=a.filter(l=>l.battery>=R.bat);if(R.verified)a=a.filter(l=>isVer(sel(l.seller)));
+ const so={price:(x,y)=>x.price-y.price,battery:(x,y)=>y.battery-x.battery||x.price-y.price,cond:(x,y)=>COND[y.cond].r-COND[x.cond].r||x.price-y.price,verified:(x,y)=>sScore(y)-sScore(x)||x.price-y.price};
+ return a.sort(so[R.sort]);
+}
+function setR(k,v){R[k]=k==='verified'?v:k==='bat'?+v:v;NOSCROLL=true;route()}
+function resetR(){Object.assign(R,{gen:'',storage:'',seller:'',max:'',bat:0,verified:false,sort:'price'});NOSCROLL=true;route()}
+function toggleCmp(id,el){
+ if(el.checked){if(S.cmp.length>=3){el.checked=false;toast('تقدر تقارن 3 أجهزة بحد أقصى');return}S.cmp.push(id)}else S.cmp=S.cmp.filter(x=>x!==id);
+ NOSCROLL=true;route();
+}
+function viewResults(){
+ const list=filtered(),o=(v,l,cur)=>`<option value="${v}" ${String(cur)===String(v)?'selected':''}>${l}</option>`;
+ const sh=R.gen&&R.storage&&DB.listings.some(l=>pub(l)&&l.gen==R.gen&&l.variant===''&&l.storage===R.storage)?pcmp(+R.gen,'',R.storage,null):'';
+ $('#app').innerHTML=`<div class="wrap page"><h1>تصفح الأجهزة</h1><p class="mut">${list.length} عرض ${DEMO?'(بيانات عينة للتجربة)':''}</p>
+ <div class="filters">
+  <label>الموديل<select onchange="setR('gen',this.value)">${o('','الكل',R.gen)}${MODELS.map(g=>o(g,'iPhone '+g,R.gen)).join('')}</select></label>
+  <label>السعة<select onchange="setR('storage',this.value)">${o('','الكل',R.storage)}${STORAGES.map(s=>o(s,s,R.storage)).join('')}</select></label>
+  <label>نوع البائع<select onchange="setR('seller',this.value)">${o('','الكل',R.seller)}${o('merchant','تاجر',R.seller)}${o('individual','فرد',R.seller)}</select></label>
+  <label>أقصى سعر<select onchange="setR('max',this.value)">${o('','أي سعر',R.max)}${[10000,15000,20000,30000,50000,80000].map(v=>o(v,'لحد '+fmt(v),R.max)).join('')}</select></label>
+  <label>أقل بطارية<select onchange="setR('bat',this.value)">${o(0,'مش شرط',R.bat)}${[80,85,90,95].map(v=>o(v,v+'%+',R.bat)).join('')}</select></label>
+  <label>ترتيب<select onchange="setR('sort',this.value)">${o('price','الأقل سعراً',R.sort)}${o('battery','الأعلى بطارية',R.sort)}${o('cond','الأفضل حالة',R.sort)}${o('verified','بائعين موثّقين أولاً',R.sort)}</select></label>
+  <label class="chk"><input type="checkbox" ${R.verified?'checked':''} onchange="setR('verified',this.checked)"> بائعين موثّقين بس</label>
+  <button class="btn ghost sm" style="margin-top:16px" onclick="resetR()">مسح الفلاتر</button></div>
+ ${sh}
+ ${list.length?`<div class="grid">${list.map(l=>card(l,{cmp:true})).join('')}</div>`:`<div class="card empty"><div class="ico-b">${I('search',24)}</div><h3>مفيش عروض مطابقة</h3><p>${DEMO?'جرّب تغيّر الفلاتر.':'الوضع التجريبي مقفول ومفيش إعلانات حقيقية دلوقتي.'}</p></div>`}
+ </div>${S.cmp.length?`<div class="cmpbar"><span>${S.cmp.length} للمقارنة</span><button class="btn primary sm" onclick="go('#/compare')" ${S.cmp.length<2?'disabled':''}>قارن دلوقتي</button><button class="icbtn" style="color:#fff" onclick="S.cmp=[];NOSCROLL=true;route()">${I('x',16)}</button></div>`:''}`;
+}
+function viewCompare(){
+ const ls=S.cmp.map(byId).filter(Boolean);
+ if(ls.length<2){$('#app').innerHTML=`<div class="wrap page"><div class="card empty"><div class="ico-b">${I('scale',24)}</div><h3>اختار جهازين أو تلاتة للمقارنة</h3><p>من صفحة تصفح الأجهزة علّم على "قارن".</p><br><button class="btn primary" onclick="go('#/results')">تصفح الأجهزة</button></div></div>`;return}
+ const minP=Math.min(...ls.map(l=>l.price)),maxB=Math.max(...ls.map(l=>l.battery));
+ const row=(t,f,best)=>`<tr><th>${t}</th>${ls.map(l=>`<td class="${best&&best(l)?'best':''}">${f(l)}</td>`).join('')}</tr>`;
+ const same=ls.every(l=>l.gen===ls[0].gen&&l.variant===ls[0].variant&&l.storage===ls[0].storage);
+ $('#app').innerHTML=`<div class="wrap page"><a class="crumb" href="#/results">${I('back',14)} رجوع للنتائج</a><h1>مقارنة الأجهزة</h1><br>
+ <div class="scroll-x"><table class="tbl"><tr><th></th>${ls.map(l=>`<td style="text-align:center">${'<div style="height:110px;display:grid;place-items:center">'+phone(l).replace('class="ph"','class="ph" style="height:100px"')+'</div>'}<b>${nm(l)}</b><br><button class="btn ghost sm" onclick="rmCmp('${l.id}')">إزالة</button></td>`).join('')}</tr>
+ ${row('السعة',l=>l.storage)}${row('السعر',l=>fmt(l.price)+' جنيه',l=>l.price===minP)}${row('صحة البطارية',l=>l.battery+'%',l=>l.battery===maxB)}${row('الحالة',l=>COND[l.cond].t)}
+ ${row('البائع',l=>`<a href="#/seller/${l.seller}"><b>${esc(sel(l.seller).name)}</b></a>`)}${row('نوع البائع',l=>sType(sel(l.seller)))}${row('توثيق البائع',l=>sellerBadge(sel(l.seller)))}${row('مستوى تحقق الجهاز',l=>vtag(l))}${row('المكان',l=>esc(sel(l.seller).city))}
+ <tr><th></th>${ls.map(l=>`<td><button class="btn primary sm" onclick="contact('${l.id}')">تواصل مع البائع</button></td>`).join('')}</tr></table></div>
+ <p class="mut" style="margin-top:10px">الخانة الخضرا = الأفضل في الصف (الأقل سعراً / الأعلى بطارية).</p>
+ ${same?pcmp(ls[0].gen,ls[0].variant,ls[0].storage,null):''}</div>`;
+}
+function rmCmp(id){S.cmp=S.cmp.filter(x=>x!==id);route()}
+function viewDevice(id){
+ const l=byId(id);if(!l||(l.status!=='active'&&!(USER&&(USER.sellerId===l.seller||USER.role==='admin')))){$('#app').innerHTML=`<div class="wrap page"><div class="card empty"><h3>الإعلان مش متاح</h3><br><button class="btn primary" onclick="go('#/results')">تصفح الأجهزة</button></div></div>`;return}
+ const s=sel(l.seller);
+ $('#app').innerHTML=`<div class="wrap page"><a class="crumb" href="javascript:history.back()">${I('back',14)} رجوع</a>
+ <div class="det"><div><div class="det-img">${phone(l)}${l.sample?'<span class="samp">بيانات عينة</span>':''}</div>${lphotos(l).length>1?`<div class="gal">${lphotos(l).map(x=>`<img src="${x}" alt="" onclick="document.querySelector('.det-img img').src=this.src">`).join('')}</div>`:''}</div>
+ <div><h1>${nm(l)} <span class="tag">${l.storage}</span></h1>
+  ${l.status!=='active'?`<span class="tag warn">الحالة: ${l.status==='pending'?'قيد المراجعة':l.status==='paused'?'موقوف':'اتباع'}</span>`:''}
+  <div class="price" style="font-size:34px;margin:6px 0">${fmt(l.price)} <small>جنيه</small></div>
+  <div class="kv"><div><small>صحة البطارية</small><b>${l.battery}%</b></div><div><small>الحالة</small><b>${COND[l.cond].t}</b></div><div><small>القطع المتغيرة</small>${esc(l.parts||'—')}</div><div><small>العيوب والخدوش</small>${esc(l.defects||'—')}</div><div><small>اللون</small>${l.color}</div><div><small>تاريخ الإعلان</small>${l.date}</div>${l.acc?`<div><small>المشتملات</small>${l.acc.length?l.acc.map(k=>ACC_O.find(a=>a[0]===k)[1]).join('، '):'الجهاز بس'}</div><div><small>الضمان</small>${esc(l.warranty||'—')}</div><div><small>الشبكة</small>${esc(l.network||'—')}</div><div><small>iCloud</small>${l.icloud?'مسجّل خروج (إقرار البائع)':'—'}</div>`:''}</div>
+  <div class="dev-act"><button class="btn primary" onclick="contact('${l.id}')">${I('msg',16)} تواصل مع البائع</button>${sellerWa(sel(l.seller))?`<button class="btn wa" onclick="waSeller('${l.id}')">${WA_SVG} واتساب</button>`:''}<button class="btn ghost" onclick="S.cmp.includes('${l.id}')||S.cmp.length>=3||S.cmp.push('${l.id}');go('#/compare')">${I('scale',16)} أضف للمقارنة</button></div>
+  <div class="card sbox"><div class="avatar-s" style="width:46px;height:46px;font-size:18px">${esc(s.name[0])}</div><div style="flex:1"><a href="#/seller/${s.id}"><b>${esc(s.name)}</b></a> <span class="tag ${s.type==='merchant'?'mer':''}">${sType(s)}</span><div style="margin:4px 0">${s.badges.map(b=>`<span class="tag ${b==='merchant'?'mer':'ok'}" style="margin-inline-end:4px">${I('check',12)} ${BADGES[b]}</span>`).join('')||'<span class="tag warn">غير موثّق</span>'}</div><div class="mut" style="font-size:13px">${I('pin',13)} ${esc(s.city)}</div></div><a class="btn ghost sm" href="#/seller/${s.id}">الملف</a></div>
+  ${lshots(l).length?`<div class="callout" style="background:#EFF6FF;border-color:#BFDBFE;color:#1E3A8A">${I('lock',14)} البائع قدّم ${lshots(l).length} لقطات من إعدادات الجهاز للمراجعة (خاصة ومش معروضة). ${l.level>=2?'اتطابقت مع البيانات المكتوبة.':'لسه تحت المراجعة.'}</div>`:''}
+  <h3>مستوى التحقق من الجهاز</h3>
+  <div class="vlevels">${[1,2,3,4].map(i=>`<div class="vl ${i<=l.level?'on':'off'}">${I(i<=l.level?'check':'lock',16)}<div><b>${VER[i].t}</b><div class="mut">${VER[i].d}</div></div></div>`).join('')}</div>
+  ${l.level>=3?`<div class="card" style="padding:14px;margin-top:10px"><b>اللي اتفحص فعلاً (${l.insp}):</b><div class="meta" style="margin-top:8px">${CHECKS[l.level].map(c=>`<span class="tag ok">${I('check',12)} ${c}</span>`).join('')}</div></div>`:`<div class="callout">المعلومات دي من إفصاح البائع${l.level===2?' واتراجعت مع الإثباتات المرفوعة':''} ومفيش اختبار أو فحص فني للجهاز لحد دلوقتي.</div>`}
+  <div class="callout">${I('lock',14)} دورلي مش بتضمن إن الجهاز أصلي 100% أو خالي من البلاغات إلا لو فيه عملية تحقق معتمدة ومكتوبة قدامه. الأرقام التسلسلية وبيانات الهوية مش بتتعرض علناً أبداً.</div></div></div>
+ <div style="margin-top:30px">${pcmp(l.gen,l.variant,l.storage,l.id)}</div></div>`;
+}
+function viewSeller(id){
+ const s=sel(id),ls=DB.listings.filter(l=>l.seller===id&&pub(l)),P=s.profile||{};
+ $('#app').innerHTML=`<div class="wrap page"><a class="crumb" href="javascript:history.back()">${I('back',14)} رجوع</a>
+ <div class="card sbox" style="padding:24px;flex-wrap:wrap"><div class="avatar-s" style="width:68px;height:68px;font-size:28px">${esc(s.name[0])}</div><div style="flex:1;min-width:220px"><h1 style="font-size:26px">${esc(s.name)}</h1>
+  <div class="meta" style="margin:6px 0"><span class="tag ${s.type==='merchant'?'mer':''}">${s.type==='merchant'?'ملف تاجر':'ملف بائع فرد'}</span>${s.badges.map(b=>`<span class="tag ${b==='merchant'?'mer':'ok'}">${I('check',12)} ${BADGES[b]}</span>`).join('')||'<span class="tag warn">غير موثّق</span>'}</div>
+  <div class="mut">${I('pin',14)} ${esc(s.city)} · على دورلي من ${s.since||'2026'}</div></div>
+  <div style="text-align:center"><b style="font-size:26px">${ls.length}</b><div class="mut">${s.type==='merchant'?'جهاز في المخزون':'جهاز معروض'}</div></div></div>
+ ${(P.bio||P.hours||P.activity||P.whatsapp||P.web||P.branches)?`<div class="card" style="padding:16px;margin-bottom:14px">${P.bio?`<p style="margin-bottom:8px">${esc(P.bio)}</p>`:''}<div class="meta">${P.activity?`<span class="tag">${esc(P.activity)}</span>`:''}${P.branches?`<span class="tag">${esc(P.branches)} فرع</span>`:''}${P.hours?`<span class="tag">مواعيد العمل: ${esc(P.hours)}</span>`:''}${P.whatsapp?(waNum(P.whatsapp)?`<a class="btn wa sm" dir="ltr" target="_blank" rel="noopener" href="${waUrl(waNum(P.whatsapp),'السلام عليكم، شفت ملفك على دورلي')}">${WA_SVG} ${esc(P.whatsapp)}</a>`:`<span class="tag" dir="ltr">واتساب ${esc(P.whatsapp)}</span>`):''}${P.web&&/^https?:\/\//.test(P.web)?`<a class="tag" href="${esc(P.web)}" target="_blank" rel="noopener noreferrer">صفحة النشاط</a>`:''}</div></div>`:''}<div class="callout" style="margin:0 0 16px">الشارات بتعكس اللي اتراجع فعلاً (رقم هاتف / هوية / توثيق تاجر). الاشتراك المدفوع مش دليل على الأمانة.</div>
+ <h3 style="margin-bottom:12px">${s.type==='merchant'?'مخزون التاجر':'الجهاز المعروض'}</h3>
+ ${ls.length?`<div class="grid">${ls.map(l=>card(l)).join('')}</div>`:'<div class="card empty">مفيش أجهزة معروضة دلوقتي.</div>'}</div>`;
+}
+function gate(t,m){$('#app').innerHTML=`<div class="wrap page"><div class="card empty"><div class="ico-b">${I('lock',24)}</div><h3>${t}</h3><p>${m}</p><br><button class="btn primary" onclick="openLogin({})">دخول / تسجيل (تجريبي)</button></div></div>`}
+function dashPrice(id,v){const l=byId(id);v=+v;if(!(v>0)){toast('اكتب سعر صحيح');route();return}l.price=v;save();toast('اتحدّث السعر')}
+function dashStatus(id,v){byId(id).status=v;save();toast('اتحدّثت الحالة');route()}
+function dashDel(id){if(!confirm('تحذف الإعلان ده؟'))return;DB.listings=DB.listings.filter(l=>l.id!==id);save();route()}
+function inqRead(id){DB.inquiries.find(q=>q.id===id).status='read';save();route()}
+function viewAbout(){
+ $('#app').innerHTML=`<div class="wrap page" style="max-width:820px"><h1>عن دورلي</h1><p class="mut" style="font-size:18px;margin:8px 0 22px">منصة بتساعدك تشتري وتبيع وتبدّل الآيفون المستعمل في مصر من غير لف ودوران.</p>
+ <div class="grid3"><div class="card svc" style="cursor:default"><div class="ico-b">${I('bot',24)}</div><h3>مساعد مش بيخترع</h3><p class="mut">المساعد بيرشّح من الإعلانات الموجودة فعلاً. مش بيألّف أجهزة أو أسعار أو نتايج تحقق.</p></div>
+ <div class="card svc" style="cursor:default"><div class="ico-b">${I('shield',24)}</div><h3>تحقق بمستويات</h3><p class="mut">أربع مستويات واضحة، وكل جهاز بيقولك اتراجع إيه ومتى.</p></div>
+ <div class="card svc" style="cursor:default"><div class="ico-b">${I('lock',24)}</div><h3>خصوصيتك</h3><p class="mut">الأرقام التسلسلية ووثائق الهوية مش بتتعرض علناً.</p></div></div>
+ <div class="callout" style="margin-top:22px">دي نسخة تجريبية: كل الأجهزة والأسعار والبائعين بيانات عينة. اشتراك التاجر المدفوع مش بيعتبر دليل على الثقة.</div></div>`;
+}
+
+/* =========================================================
+   Modals, login, contact, toast
+   ========================================================= */
+let AFTER=null;
+function openModal(h){const m=$('#modal');m.innerHTML=`<div class="mbox">${h}</div>`;m.classList.add('on')}
+function closeModal(){$('#modal').classList.remove('on')}
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),2800)}
+async function logout(){await Cloud.signOut();USER=null;DB=await Cloud.load();renderHeader();go('#/')}
+function contact(id,kind){
+ const l=byId(id),s=sel(l.seller);
+ openModal(`<h2>تواصل مع ${esc(s.name)}</h2><p class="mut" style="margin-bottom:10px">${nm(l)} · ${l.storage} · ${fmt(l.price)} جنيه</p>
+ <form class="form" onsubmit="sendInq(event,'${id}')"><label>اسمك<input id="q_n" required value="${USER?esc(USER.name):''}"></label><label>رقم موبايلك (بيوصل للبائع بس)<input id="q_p" required inputmode="tel" placeholder="01XXXXXXXXX"></label>
+ <label>رسالتك<textarea id="q_m" rows="3">${kind==='trade'?'السلام عليكم، عايز أبدّل جهازي بالجهاز ده. ينفع نتفق على الفرق؟':'السلام عليكم، الجهاز لسه متاح؟'}</textarea></label>
+ <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" style="flex:1">إرسال</button>${sellerWa(s)?`<button type="button" class="btn wa" style="flex:1" onclick="waSeller('${id}')">${WA_SVG} كلّمه واتساب</button>`:''}<button type="button" class="btn ghost" onclick="closeModal()">إلغاء</button></div>${sellerWa(s)?'':'<p class="mut" style="font-size:13px;margin-top:6px">البائع ده مضافش رقم واتساب — ابعتله رسالة من هنا وهيرد عليك.</p>'}</form>`);
+}
+function sendInq(ev,id){ev.preventDefault();const l=byId(id);
+ DB.inquiries.unshift({id:'Q'+Date.now(),seller:l.seller,listing:id,name:$('#q_n').value,phone:$('#q_p').value,msg:$('#q_m').value,time:'دلوقتي',status:'new',sample:false});
+ save();closeModal();toast('اتبعت استفسارك للبائع ✅')}
+
+/* =========================================================
+   Accounts & auth  (prototype: stored in localStorage.
+   Production: server-side argon2/bcrypt, real SMS OTP, private file storage, rate limiting)
+   ========================================================= */
+const GOVS=['القاهرة','الجيزة','الإسكندرية','القليوبية','الدقهلية','الشرقية','الغربية','المنوفية','البحيرة','كفر الشيخ','دمياط','بورسعيد','الإسماعيلية','السويس','الفيوم','بني سويف','المنيا','أسيوط','سوهاج','قنا','الأقصر','أسوان','مطروح','البحر الأحمر','شمال سيناء','جنوب سيناء','الوادي الجديد'];
+const ACTS=['محل موبايلات','معرض / جملة','بيع وصيانة','بيع أونلاين'];
+const RSTEPS={individual:['account','otp','identity','profile','done'],merchant:['account','otp','business','docs','profile','done'],customer:['account','otp','done']};
+const RLBL={account:'بيانات الحساب',otp:'تأكيد الموبايل',identity:'إثبات الهوية',profile:'ملفك العام',business:'بيانات النشاط',docs:'المستندات',done:'تم'};
+let RETURN='',REG=null,RST=null,LOGIN_FAILS=0,OTPT=null,AUTH_ROLE=null,AUTH_REASON='',VF={};
+const normPhone=s=>{s=toEn(s).replace(/[\s\-()]/g,'');if(s.startsWith('+20'))s='0'+s.slice(3);else if(s.startsWith('0020'))s='0'+s.slice(4);else if(/^20\d{10}$/.test(s))s='0'+s.slice(2);return s};
+const okPhone=s=>/^01[0125]\d{8}$/.test(normPhone(s));
+/* WhatsApp click-to-chat (wa.me). Egyptian 01XXXXXXXXX -> 201XXXXXXXXX */
+const waNum=s=>s&&okPhone(s)?'20'+normPhone(s).slice(1):'';
+const waUrl=(num,msg)=>`https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
+const sellerWa=s=>waNum(s&&s.profile&&s.profile.whatsapp);
+const WA_SVG=`<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.7.5-.1 1.5-.6 1.8-1.2.2-.6.2-1.1.1-1.2l-.5-.3z"/></svg>`;
+function waSeller(id){const l=byId(id),n=sellerWa(sel(l.seller));if(!n)return;const m=($('#q_m')||{}).value||'السلام عليكم، الجهاز لسه متاح؟';
+ window.open(waUrl(n,`${m}\n\n${nm(l)} · ${l.storage} · ${fmt(l.price)} جنيه (إعلان على دورلي)`),'_blank','noopener')}
+function waBuyer(qid){const q=DB.inquiries.find(x=>x.id===qid),n=q&&waNum(q.phone);if(!n)return;const l=byId(q.listing),s=sel(USER.sellerId);
+ if(q.status==='new'){q.status='read';save()}
+ window.open(waUrl(n,`أهلاً ${q.name}، معاك ${s?s.name:''} من دورلي بخصوص استفسارك عن ${l?nm(l)+' '+l.storage:'الجهاز'}.`),'_blank','noopener');route()}
+const okMail=s=>/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
+const genOtp=()=>String(Math.floor(100000+Math.random()*900000));
+const autoDisplay=n=>{const p=String(n||'').trim().split(/\s+/);return p.length>1?p[0]+' '+p[p.length-1][0]+'.':p[0]||''};
+async function hashPw(pw,salt){
+ try{const b=new TextEncoder().encode(salt+pw);const h=await crypto.subtle.digest('SHA-256',b);return [...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+ catch(e){let h=5381;for(const c of salt+pw)h=((h<<5)+h+c.charCodeAt(0))>>>0;return 'x'+h}
+}
+function openLogin(o){
+ o=o||{};AFTER=o.after||null;RETURN=o.back||(location.hash.startsWith('#/auth')?'#/':location.hash||'#/');
+ AUTH_REASON=o.reason||'';AUTH_ROLE=o.role||null;REG=null;RST=null;closeModal();
+ go('#/auth/'+(o.mode||'login'));
+}
+function setSession(){const u=Cloud.user();if(u&&u.sellerId){const s=DB.sellers.find(x=>x.id===u.sellerId);if(s)u.name=s.name}USER=u;renderHeader()}
+function afterAuth(){
+ const f=AFTER,b=RETURN;AFTER=null;RETURN='';AUTH_REASON='';REG=null;RST=null;
+ if(f){location.hash=b||'#/';setTimeout(f,250)}
+ else go(USER.role==='customer'?'#/':'#/dashboard');
+}
+function showErr(list){const b=$('#rerr');if(!b)return;b.innerHTML=`<div class="err-box"><ul>${list.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;b.scrollIntoView({block:'center',behavior:'smooth'})}
+const togglePw=(id,btn)=>{const i=$('#'+id);i.type=i.type==='password'?'text':'password';btn.textContent=i.type==='password'?'إظهار':'إخفاء'};
+
+function viewAuth(mode){
+ clearInterval(OTPT);
+ const m=['register','reset'].includes(mode)?mode:'login';
+ const inner=m==='register'?authReg():m==='reset'?authReset():authLogin();
+ const tabs=m==='reset'?'':`<div class="tabs" style="margin-top:0"><button class="${m==='login'?'on':''}" onclick="go('#/auth/login')">تسجيل الدخول</button><button class="${m==='register'?'on':''}" onclick="go('#/auth/register')">إنشاء حساب</button></div>`;
+ $('#app').innerHTML=`<div class="wrap page" style="max-width:${m==='register'&&REG&&REG.role?760:640}px"><div class="card" style="padding:26px">${tabs}${AUTH_REASON?`<div class="callout" style="margin:0 0 14px">${esc(AUTH_REASON)}</div>`:''}${inner}</div></div>`;
+ if(m==='register'&&REG&&REG.role&&RSTEPS[REG.role][REG.step]==='otp')startCd();
+ if(m==='reset'&&RST&&RST.step===1)startCd(RST);
+}
+
+/* ---- login ---- */
+function authLogin(){
+ if(USER)return `<h2>إنت داخل بالفعل</h2><p class="mut">داخل كـ <b>${esc(USER.name)}</b> (${ROLE_T[USER.role]}).</p><br><div style="display:flex;gap:8px"><button class="btn primary" onclick="afterAuth()">كمّل</button><button class="btn ghost" onclick="logout()">تسجيل خروج</button></div>`;
+ return `<h2>أهلاً بيك تاني 👋</h2><p class="mut" style="margin-bottom:14px">ادخل برقم الموبايل أو الإيميل.</p>
+ <form class="form" onsubmit="doLoginForm(event)">
+  <label>رقم الموبايل أو الإيميل<input id="l_id" required autocomplete="username" dir="ltr" style="text-align:start"></label>
+  <label>كلمة السر<div style="position:relative"><input id="l_pw" type="password" required autocomplete="current-password" style="padding-inline-end:64px"><button type="button" class="pwt" onclick="togglePw('l_pw',this)">إظهار</button></div></label>
+  <div id="lerr" class="err-txt" role="alert"></div>
+  <button class="btn primary">دخول</button>
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px"><button type="button" class="lnk" onclick="RST=null;go('#/auth/reset')">نسيت كلمة السر؟</button><span class="mut">معندكش حساب؟ <button type="button" class="lnk" onclick="go('#/auth/register')">سجّل دلوقتي</button></span></div></form>
+ `;
+}
+async function doLoginForm(ev){
+ ev.preventDefault();const id=$('#l_id').value.trim(),pw=$('#l_pw').value,err=m=>{$('#lerr').textContent=m};
+ if(LOGIN_FAILS>=5){err('حاولت كتير. استنى دقيقة وجرّب تاني.');return}
+ err('');const r=await Cloud.signIn(id,pw,okPhone(id)?normPhone(id):null);
+ if(r.error==='disabled'){err('الحساب ده موقوف. تواصل مع الدعم.');return}
+ if(r.error){LOGIN_FAILS++;setTimeout(()=>{LOGIN_FAILS=0},60000);err('البيانات مش مظبوطة. اتأكد من الرقم أو الإيميل وكلمة السر.');return}
+ LOGIN_FAILS=0;DB=r.db;setSession();toast('أهلاً '+USER.name);afterAuth();
+}
+
+/* ---- password reset (phone OTP) ---- */
+function authReset(){
+ if(!RST)RST={step:0};
+ const back=`<button type="button" class="lnk" onclick="RST=null;go('#/auth/login')">رجوع لتسجيل الدخول</button>`;
+ return `<h2>نسيت كلمة السر؟</h2><p class="mut" style="margin-bottom:14px">استرجاع كلمة السر بكود SMS لسه مش متفعّل. كلّم فريق دورلي وهنساعدك ترجع لحسابك بعد ما نتأكد إنه بتاعك.</p>${back}`;
+ if(RST.step===1)return `<h2>اكتب كود التأكيد</h2><p class="mut">لو الرقم مسجّل هيوصله كود من 6 أرقام.</p><div class="callout">نسخة تجريبية: مفيش SMS حقيقي، الكود هو <b dir="ltr" style="font-size:18px">${RST.code}</b></div><form class="form" onsubmit="resetVerify(event)"><label>الكود<input id="r_otp" inputmode="numeric" maxlength="6" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button><div style="display:flex;gap:10px;align-items:center"><button type="button" class="btn ghost sm" id="rs" onclick="resetSend()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span></div></form>`;
+ return `<h2>كلمة سر جديدة</h2><form class="form" onsubmit="resetSave(event)"><label>كلمة السر الجديدة<div style="position:relative"><input id="r_pw" type="password" autocomplete="new-password" style="padding-inline-end:64px"><button type="button" class="pwt" onclick="togglePw('r_pw',this)">إظهار</button></div><span class="mut" style="font-size:12px;font-weight:400">8 حروف على الأقل، فيها حروف وأرقام.</span></label><label>تأكيد كلمة السر<input id="r_pw2" type="password" autocomplete="new-password"></label><div id="rerr"></div><button class="btn primary">حفظ</button></form>`;
+}
+function resetSend(ev){
+ if(ev)ev.preventDefault();
+ const ph=RST.phone||normPhone($('#r_ph').value);
+ if(!okPhone(ph)){showErr(['اكتب رقم موبايل مصري صحيح']);return}
+ RST={step:1,phone:ph,code:genOtp(),tries:0,sent:Date.now(),exists:DB.users.some(u=>u.phone===ph)};viewAuth('reset');
+}
+function resetVerify(ev){
+ ev.preventDefault();const v=toEn($('#r_otp').value.trim());
+ if(RST.tries>=5){showErr(['جرّبت كتير. اطلب كود جديد.']);return}
+ if(v!==RST.code){RST.tries++;showErr(['الكود غلط ('+(5-RST.tries)+' محاولات متبقية)']);return}
+ RST.step=2;viewAuth('reset');
+}
+async function resetSave(ev){
+ ev.preventDefault();const p=$('#r_pw').value,p2=$('#r_pw2').value;
+ if(p.length<8||!/\d/.test(p)||!/[A-Za-z؀-ۿ]/.test(p)){showErr(['كلمة السر لازم تكون 8 حروف على الأقل وفيها حروف وأرقام']);return}
+ if(p!==p2){showErr(['كلمتين السر مش متطابقين']);return}
+ const u=DB.users.find(u=>u.phone===RST.phone);
+ if(u){u.salt=Math.random().toString(36).slice(2);u.pw=await hashPw(p,u.salt);save()}
+ RST=null;toast('لو الحساب موجود، كلمة السر اتغيّرت. ادخل بيها دلوقتي.');go('#/auth/login');
+}
+function startCd(o){
+ const src=o||REG;clearInterval(OTPT);
+ const tick=()=>{const o2=src.otp||src,left=30-Math.floor((Date.now()-o2.sent)/1000),b=$('#rs');
+  if(!b){clearInterval(OTPT);return}
+  if(left>0){b.disabled=true;$('#rcd').textContent='تقدر تعيد الإرسال بعد '+left+' ثانية'}else{b.disabled=false;$('#rcd').textContent='';clearInterval(OTPT)}};
+ tick();OTPT=setInterval(tick,1000);
+}
+
+/* ---- registration wizard ---- */
+const fld=(id,label,o={})=>`<label><span>${label}${o.req?' <span class="rq">*</span>':''}</span><input id="f_${id}" type="${o.type||'text'}" value="${esc(REG.d[id]||'')}" ${o.ph?`placeholder="${o.ph}"`:''} ${o.attr||''} oninput="REG.d.${id}=this.value" autocomplete="${o.ac||'off'}">${o.hint?`<span class="hnt">${o.hint}</span>`:''}</label>`;
+const sfld=(id,label,opts,o={})=>`<label><span>${label}${o.req?' <span class="rq">*</span>':''}</span><select id="f_${id}" onchange="REG.d.${id}=this.value"><option value="">اختار…</option>${opts.map(x=>`<option ${REG.d[id]===x?'selected':''}>${x}</option>`).join('')}</select></label>`;
+const pwf=(id,label,hint)=>`<label><span>${label} <span class="rq">*</span></span><div style="position:relative"><input id="f_${id}" type="password" value="${esc(REG.d[id]||'')}" oninput="REG.d.${id}=this.value" autocomplete="new-password" style="padding-inline-end:64px"><button type="button" class="pwt" onclick="togglePw('f_${id}',this)">إظهار</button></div>${hint?`<span class="hnt">${hint}</span>`:''}</label>`;
+const upl=(key,label,o={},store='REG.files')=>`<div class="upl"><div style="flex:1;min-width:180px"><b>${label}</b>${o.req?' <span class="rq">*</span>':''}<div class="hnt">${o.hint||'صورة واضحة أو PDF'}</div></div><label class="btn ghost sm" style="cursor:pointer">${I('image',14)} اختار ملف<input type="file" accept="image/*,.pdf" hidden onchange="${store}.${key}=this.files[0]?this.files[0].name:'';this.parentNode.nextElementSibling.textContent=${store}.${key}||'لسه ماتختارش'"></label><span class="fn">${esc((store==='VF'?VF:REG.files)[key]||'لسه ماتختارش')}</span></div>`;
+const regNav=(st,o={})=>`<div id="rerr"></div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn primary" style="flex:1;min-width:140px" onclick="regNext()">${o.next||'التالي'}</button>${o.skip?`<button class="btn ghost" onclick="regNext(true)">${o.skip}</button>`:''}${REG.step>0?`<button class="btn ghost" onclick="regBack()">رجوع</button>`:''}</div>`;
+
+function authReg(){
+ if(!REG)REG={role:AUTH_ROLE,step:0,d:{},files:{}};
+ if(!REG.role)return `<h2>إنشاء حساب</h2><p class="mut" style="margin-bottom:14px">اختار نوع الحساب اللي يناسبك:</p>
+  <div class="grid3"><button class="ocard" onclick="regPick('individual')"><div class="ico-b">${I('user',24)}</div><b>بائع حر (فرد)</b><span class="d">بتبيع جهازك الشخصي — جهاز واحد في المرة.</span><span class="hnt">هتحتاج: رقم موبايل. البطاقة اختيارية لشارة الهوية.</span></button>
+  <button class="ocard" onclick="regPick('merchant')"><div class="ico-b">${I('store',24)}</div><b>تاجر</b><span class="d">عندك محل أو مخزون أجهزة — إدارة مخزون وأكتر من جهاز.</span><span class="hnt">هتحتاج: بيانات النشاط. سجل تجاري وبطاقة ضريبية لشارة «تاجر موثّق».</span></button></div>
+  <p class="mut" style="margin-top:16px">عايز تشتري بس؟ <button class="lnk" onclick="regPick('customer')">اعمل حساب عميل</button></p>`;
+ const steps=RSTEPS[REG.role],st=steps[REG.step];
+ const stepper=`<div class="stepper">${steps.map((s,i)=>`<div class="st ${i<REG.step?'done':i===REG.step?'on':''}"><i>${i<REG.step?'✓':i+1}</i><span>${RLBL[s]}</span></div>`).join('')}</div>`;
+ return stepper+regStepHtml(st);
+}
+function regPick(r){REG={role:r,step:0,d:{},files:{}};viewAuth('register')}
+function regChangeType(){REG=null;AUTH_ROLE=null;viewAuth('register')}
+function previewCard(){
+ const d=REG.d,m=REG.role==='merchant',n=m?d.bizName:(d.display||'—'),city=(d.area?d.area+' – ':'')+(d.gov||'');
+ return `<div class="card sbox" style="margin-top:12px"><div class="avatar-s" style="width:46px;height:46px;font-size:18px">${esc((n||'?')[0])}</div><div><div class="hnt">كده هتظهر للمشترين</div><b>${esc(n||'—')}</b> <span class="tag ${m?'mer':''}">${m?'تاجر':'فرد'}</span><div><span class="tag ok">${I('check',12)} ${BADGES.phone}</span></div><div class="mut" style="font-size:13px">${I('pin',13)} ${esc(city||'—')}</div></div></div>`;
+}
+function regStepHtml(st){
+ const d=REG.d,r=REG.role;
+ switch(st){
+ case 'account':return `<h2>${r==='merchant'?'بيانات صاحب الحساب':r==='customer'?'حساب العميل':'بيانات حسابك'}</h2><p class="mut" style="margin-bottom:12px">نوع الحساب: <b>${r==='merchant'?'تاجر':r==='individual'?'بائع حر (فرد)':'عميل'}</b> <button class="lnk" onclick="regChangeType()">تغيير</button></p>
+  <div class="form">${fld('name',r==='merchant'?'اسم صاحب النشاط بالكامل':'اسمك بالكامل',{req:1,ac:'name',hint:'بيستخدم في التحقق فقط، مش بيتعرض علناً.'})}${fld('phone','رقم الموبايل',{req:1,type:'tel',ac:'tel',attr:'dir="ltr" style="text-align:start" inputmode="tel"',ph:'01012345678'})}${fld('email','الإيميل (اختياري)',{type:'email',ac:'email',attr:'dir="ltr" style="text-align:start"'})}
+  <div class="two">${pwf('password','كلمة السر','8 حروف على الأقل، فيها حروف وأرقام.')}${pwf('password2','تأكيد كلمة السر')}</div>
+  <label class="chkl"><input type="checkbox" ${d.terms?'checked':''} onchange="REG.d.terms=this.checked"> <span>موافق على شروط الاستخدام وسياسة الخصوصية، وإن بياناتي ومستنداتي بتتستخدم للتحقق بس.</span></label></div>${regNav(st,{next:'التالي: تأكيد الموبايل'})}`;
+ case 'otp':return `<h2>أكّد رقم موبايلك</h2><p class="mut">بعتنالك كود من 6 أرقام على <b dir="ltr">${esc(normPhone(d.phone))}</b>.</p><div class="callout">نسخة تجريبية: مفيش SMS حقيقي، الكود هو <b dir="ltr" style="font-size:18px">${REG.otp.code}</b></div>
+  <form class="form" onsubmit="otpVerify(event)"><label>كود التأكيد<input id="f_otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button></form>
+  <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn ghost sm" id="rs" onclick="resendOtp()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span><button class="btn ghost sm" onclick="regBack()">تغيير الرقم</button></div>`;
+ case 'identity':return `<h2>إثبات هويتك <span class="tag">اختياري دلوقتي</span></h2><p class="mut" style="margin-bottom:10px">عشان تاخد شارة «هوية البائع متحققة» ويثق فيك المشتري أسرع. مش بنسأل عن رقم البطاقة.</p><div class="callout" style="margin:0 0 12px">${I('lock',14)} صور البطاقة بيشوفها فريق التحقق بس، ومش بتتعرض للمشترين ولا بتتنشر أبداً. الشارة بتتمنح بعد المراجعة.</div>
+  <div class="form">${upl('idf','صورة البطاقة (الوش)')}${upl('idb','صورة البطاقة (الضهر)')}${upl('selfie','سيلفي وانت ماسك البطاقة')}</div>${regNav(st,{skip:'هعمل ده بعدين'})}`;
+ case 'business':return `<h2>بيانات النشاط التجاري</h2><p class="mut" style="margin-bottom:12px">دي بتظهر على صفحة المحل (ما عدا العنوان التفصيلي).</p>
+  <div class="form">${fld('bizName','اسم النشاط / المحل',{req:1,ph:'مثلاً: تك زون للموبايلات'})}<div class="two">${sfld('activity','نوع النشاط',ACTS,{req:1})}${fld('branches','عدد الفروع',{type:'number',attr:'min="1"',ph:'1'})}</div><div class="two">${sfld('gov','المحافظة',GOVS,{req:1})}${fld('area','المنطقة',{req:1,ph:'مثلاً: وسط البلد'})}</div>${fld('address','العنوان بالتفصيل',{req:1,hint:'للتحقق فقط — مش بيتعرض للمشترين.'})}${fld('web','لينك فيسبوك / انستجرام (اختياري)',{type:'url',attr:'dir="ltr" style="text-align:start"'})}</div>${regNav(st)}`;
+ case 'docs':return `<h2>مستندات التوثيق <span class="tag">اختياري دلوقتي</span></h2><p class="mut" style="margin-bottom:10px">عشان تاخد شارة «تاجر موثّق». تقدر تكمّلها بعدين من لوحتك.</p><div class="callout" style="margin:0 0 12px">${I('lock',14)} المستندات بيشوفها فريق التحقق بس. الشارة بتتمنح بعد المراجعة فقط — مش بتتشرى وملهاش علاقة بأي اشتراك مدفوع.</div>
+  <div class="form"><div class="two">${fld('crNo','رقم السجل التجاري')}${fld('taxNo','رقم البطاقة الضريبية')}</div>${upl('cr','السجل التجاري')}${upl('tax','البطاقة الضريبية')}${upl('shop','صورة واجهة المحل')}${upl('idf','بطاقة المالك (الوش)',{hint:'لشارة هوية المالك — اختياري'})}${upl('idb','بطاقة المالك (الضهر)',{hint:'اختياري'})}</div>${regNav(st,{skip:'هرفع بعدين'})}`;
+ case 'profile':if(r==='merchant')return `<h2>ملف المحل</h2><p class="mut" style="margin-bottom:12px">اللي هيشوفه المشتري على صفحتك.</p><div class="form">${fld('hours','مواعيد العمل',{ph:'مثلاً: يومياً 10 ص – 10 م'})}${fld('whatsapp','رقم واتساب للتواصل (اختياري)',{type:'tel',attr:'dir="ltr" style="text-align:start"',hint:'هيظهر علناً على صفحتك لو كتبته.'})}<label>نبذة عن المحل<textarea id="f_bio" rows="3" maxlength="300" oninput="REG.d.bio=this.value">${esc(d.bio||'')}</textarea></label></div>${previewCard()}${regNav(st,{next:'إنشاء الحساب'})}`;
+  return `<h2>ملفك العام</h2><p class="mut" style="margin-bottom:12px">اللي هيشوفه المشتري. الخصوصية أولاً: ننصح بالاسم الأول وأول حرف من العيلة.</p><div class="form">${fld('display','الاسم اللي هيظهر للمشترين',{req:1,hint:'مثلاً: أحمد م.'})}<div class="two">${sfld('gov','المحافظة',GOVS,{req:1})}${fld('area','المنطقة (اختياري)')}</div><label>نبذة عنك (اختياري)<textarea id="f_bio" rows="3" maxlength="300" oninput="REG.d.bio=this.value">${esc(d.bio||'')}</textarea></label></div>${previewCard()}${regNav(st,{next:'إنشاء الحساب'})}`;
+ case 'done':return regDone();
+ }
+ return '';
+}
+function validate(st){
+ const d=REG.d,r=REG.role,e=[],need=(k,m)=>{if(!String(d[k]||'').trim())e.push(m)},f=REG.files;
+ if(st==='account'){
+  need('name','اكتب اسمك بالكامل');
+  if(d.name&&d.name.trim().split(/\s+/).length<2)e.push('اكتب الاسم الأول واسم العيلة على الأقل');
+  if(!okPhone(d.phone||''))e.push('رقم الموبايل لازم يكون مصري صحيح (مثلاً 01012345678)');
+  if(d.email&&!okMail(d.email))e.push('الإيميل مش مظبوط');
+  const pw=d.password||'';
+  if(pw.length<8||!/\d/.test(pw)||!/[A-Za-z؀-ۿ]/.test(pw))e.push('كلمة السر لازم تكون 8 حروف على الأقل وفيها حروف وأرقام');
+  else if(pw!==d.password2)e.push('كلمتين السر مش متطابقين');
+  if(!d.terms)e.push('لازم توافق على الشروط وسياسة الخصوصية');
+ }
+ if(st==='identity'&&[f.idf,f.idb,f.selfie].some(Boolean)&&![f.idf,f.idb,f.selfie].every(Boolean))e.push('كمّل رفع الوش والضهر والسيلفي، أو سيبهم كلهم لبعدين');
+ if(st==='business'){need('bizName','اكتب اسم النشاط التجاري');need('activity','اختار نوع النشاط');need('gov','اختار المحافظة');need('area','اكتب المنطقة');need('address','اكتب عنوان المحل بالتفصيل (للتحقق فقط)');if(d.branches&&+d.branches<1)e.push('عدد الفروع لازم يكون 1 على الأقل');if(d.web&&!/^https?:\/\//i.test(d.web))e.push('اللينك لازم يبدأ بـ https://')}
+ if(st==='docs'){const any=[f.cr,f.tax,f.shop].some(Boolean);if(any&&(!(f.cr&&f.tax&&f.shop)||!String(d.crNo||'').trim()||!String(d.taxNo||'').trim()))e.push('عشان طلب «تاجر موثّق» لازم السجل والبطاقة الضريبية وصورة المحل وأرقامهم، أو سيبهم كلهم لبعدين');if([f.idf,f.idb].some(Boolean)&&!(f.idf&&f.idb))e.push('ارفع وش وضهر بطاقة المالك مع بعض')}
+ if(st==='profile'){if(r==='individual'){need('display','اكتب الاسم اللي هيظهر للمشترين');need('gov','اختار المحافظة')}if(d.bio&&d.bio.length>300)e.push('النبذة أطول من 300 حرف');if(d.whatsapp&&!okPhone(d.whatsapp))e.push('رقم الواتساب مش مظبوط')}
+ return e;
+}
+function sendOtp(){REG.otp={code:genOtp(),tries:0,sent:Date.now()}}
+function resendOtp(){sendOtp();viewAuth('register');toast('بعتنالك كود جديد')}
+async function advance(){
+ const n=REG.step+1,steps=RSTEPS[REG.role];
+ if(steps[n]==='profile'&&REG.role==='individual'&&!REG.d.display)REG.d.display=autoDisplay(REG.d.name);
+ if(steps[n]==='done'){const e=await finalizeReg();if(e){showErr([e]);return}}
+ REG.step=n;viewAuth('register');window.scrollTo(0,0);
+}
+async function regNext(skip){
+ const st=RSTEPS[REG.role][REG.step],e=skip?[]:validate(st);
+ if(e.length){showErr(e);return}
+ if(st==='account'){const t=await Cloud.taken(normPhone(REG.d.phone),(REG.d.email||'').trim());if(t){showErr([t==='phone'?'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول':'الإيميل ده مسجّل قبل كده']);return}}
+ if(st==='account'){const p=normPhone(REG.d.phone);if(REG.phoneOk&&REG.vph===p)REG.step++;else{REG.phoneOk=false;sendOtp()}}
+ await advance();
+}
+function regBack(){
+ if(REG.created)return;let t=REG.step-1;if(RSTEPS[REG.role][t]==='otp')t--;REG.step=Math.max(0,t);viewAuth('register');window.scrollTo(0,0);
+}
+function otpVerify(ev){
+ ev.preventDefault();const v=toEn($('#f_otp').value.trim()),o=REG.otp;
+ if(o.tries>=5){showErr(['جرّبت كتير. اطلب كود جديد.']);return}
+ if(Date.now()-o.sent>10*60*1000){showErr(['الكود انتهى. اطلب كود جديد.']);return}
+ if(v!==o.code){o.tries++;showErr(['الكود غلط ('+(5-o.tries)+' محاولات متبقية)']);return}
+ REG.phoneOk=true;REG.vph=normPhone(REG.d.phone);advance();
+}
+async function finalizeReg(){
+ if(REG.created||REG.busy)return;
+ const d=REG.d,role=REG.role,f=REG.files,verifs=[],doc=a=>a.map(x=>({label:x[0],name:x[1]}));
+ if(role==='merchant'&&f.cr&&f.tax&&f.shop)verifs.push({kind:'merchant',docs:doc([['السجل التجاري',f.cr],['البطاقة الضريبية',f.tax],['صورة المحل',f.shop]])});
+ if(role!=='customer'&&f.idf&&f.idb)verifs.push({kind:'identity',docs:doc([['البطاقة (وش)',f.idf],['البطاقة (ضهر)',f.idb]].concat(f.selfie?[['سيلفي بالبطاقة',f.selfie]]:[]))});
+ const P={bio:d.bio||'',hours:d.hours||'',whatsapp:d.whatsapp?normPhone(d.whatsapp):'',activity:d.activity||'',branches:d.branches||'',address:d.address||'',web:d.web||'',crNo:d.crNo||'',taxNo:d.taxNo||'',owner:d.name,gov:d.gov||'',area:d.area||''};
+ REG.busy=true;toast('جاري إنشاء الحساب…');
+ const r=await Cloud.signUp({role,name:d.name.trim(),phone:normPhone(d.phone),email:(d.email||'').trim(),password:d.password,today:TODAY,
+  seller:role==='customer'?null:{name:role==='merchant'?d.bizName.trim():(d.display||autoDisplay(d.name)).trim(),profile:P},verifs});
+ REG.busy=false;
+ if(r.error)return r.error==='taken_phone'?'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول':r.error==='taken_email'?'الإيميل ده مسجّل قبل كده':'حصلت مشكلة في إنشاء الحساب. جرّب تاني بعد شوية.';
+ DB=r.db;setSession();REG.created={id:USER.uid,name:d.name.trim(),role,sellerId:USER.sellerId};
+}
+function regDone(){
+ const u=REG.created,r=REG.role,sid=u.sellerId,row=(t,tag,note)=>`<div class="vl on" style="align-items:center"><div style="flex:1"><b>${t}</b>${note?`<div class="mut" style="font-size:13px">${note}</div>`:''}</div>${tag}</div>`;
+ const vs=k=>{const v=vstatus(sid,k);return v?v.status:'none'};
+ let rows=row('رقم الهاتف',stTag('approved'),'اتأكد بالكود');
+ if(r==='individual')rows+=row('هوية البائع متحققة',stTag(vs('identity')),vs('identity')==='none'?'ارفع بطاقتك من لوحتك لما تحب':'بنراجع المستندات، غالباً خلال 1–3 أيام عمل');
+ if(r==='merchant')rows+=row('تاجر موثّق',stTag(vs('merchant')),vs('merchant')==='none'?'ارفع السجل التجاري والبطاقة الضريبية من لوحتك':'بنراجع المستندات، غالباً خلال 1–3 أيام عمل')+row('هوية المالك',stTag(vs('identity')),vs('identity')==='none'?'اختياري':'');
+ if(r!=='customer')rows+=row('بائع موثوق','<span class="tag">بالسجل</span>','بتتمنح بعد تعاملات ناجحة — مش بتتشرى');
+ const primary=AFTER?`<button class="btn primary" onclick="afterAuth()">كمّل نشر إعلانك</button>`:r==='customer'?`<button class="btn primary" onclick="afterAuth();go('#/chat/buy')">ابدأ دوّر على آيفون</button>`:`<button class="btn primary" onclick="afterAuth()">ادخل لوحة البيع</button>`;
+ return `<div style="text-align:center;margin:6px 0 16px"><div class="ico-b" style="margin:0 auto 10px;background:var(--okl);color:var(--ok)">${I('check',26)}</div><h2>اتعمل حسابك 🎉</h2><p class="mut">${esc(sid?sel(sid).name:u.name)} — ${r==='merchant'?'حساب تاجر':r==='individual'?'حساب بائع حر':'حساب عميل'}</p></div>
+ <div class="vlevels" style="margin-bottom:14px">${rows}</div>
+ ${r!=='customer'?`<div class="callout">إعلاناتك بتظهر للمشترين بعد مراجعتها، وبتتعرض بمستوى «إفصاح البائع» لحد ما يتراجع أو يتفحص الجهاز. شارات التوثيق بتتمنح بعد مراجعة المستندات فقط.</div>`:''}
+ <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">${primary}${r!=='customer'?`<button class="btn ghost" onclick="DT='verify';afterAuth()">كمّل التوثيق</button><button class="btn ghost" onclick="afterAuth();go('#/chat/sell')">أضف جهاز بالمحادثة</button>`:''}</div>`;
+}
+
+/* ===== Verification + seller dashboard ===== */
+const vstatus=(sid,k)=>DB.verifs.filter(v=>v.seller===sid&&v.kind===k).pop();
+function mkV(seller,kind,docs){return {id:'V'+Date.now()+kind[0],seller,kind,docs:docs.map(x=>({label:x[0],name:x[1]})),status:'pending',reason:'',time:TODAY,sample:false}}
+function stTag(st){return st==='approved'?`<span class="tag ok">${I('check',12)} تم التوثيق</span>`:st==='pending'?'<span class="tag warn">قيد المراجعة</span>':st==='rejected'?'<span class="tag rej">اترفض</span>':'<span class="tag">لسه ماتقدمش</span>'}
+const DOC_L={idf:'صورة البطاقة (الوش)',idb:'صورة البطاقة (الضهر)',selfie:'سيلفي وانت ماسك البطاقة',cr:'السجل التجاري',tax:'البطاقة الضريبية',shop:'صورة واجهة المحل'};
+const needDocs=(k,s)=>k==='identity'?(s.type==='merchant'?['idf','idb']:['idf','idb','selfie']):['cr','tax','shop'];
+function vcard(k,s){
+ const v=vstatus(s.id,k),has=s.badges.includes(k==='merchant'?'merchant':'identity'),st=has?'approved':v?v.status:'none';
+ const T={identity:[s.type==='merchant'?'هوية المالك (شارة «هوية البائع متحققة»)':'هوية البائع متحققة','بنتأكد إنك صاحب الحساب بمطابقة البطاقة'+(s.type==='merchant'?'.':' والسيلفي.')+' صور البطاقة بيشوفها فريق التحقق بس ومش بتتعرض لحد.'],merchant:['تاجر موثّق','بنراجع السجل التجاري والبطاقة الضريبية وصورة المحل عشان نتأكد إن النشاط حقيقي.']}[k];
+ let body='';
+ if(st==='approved')body=`<div class="mut">الشارة ظاهرة على ملفك وإعلاناتك.${v&&v.time?' تاريخ الاعتماد: '+v.time:''}</div>`;
+ else if(st==='pending')body=`<div class="mut">استلمنا مستنداتك (${v.docs.map(d=>esc(d.label)).join('، ')}) وبنراجعها — غالباً خلال 1–3 أيام عمل.</div>`;
+ else{
+  if(st==='rejected')body+=`<div class="err-box" style="margin-bottom:10px"><b>سبب الرفض:</b> ${esc(v.reason||'المستندات مش واضحة')}. تقدر ترفع مستندات جديدة وتبعت تاني.</div>`;
+  const P=s.profile||{};
+  body+=`<div class="form">${k==='merchant'?`<div class="two"><label>رقم السجل التجاري<input id="v_cr" value="${esc(P.crNo||'')}"></label><label>رقم البطاقة الضريبية<input id="v_tax" value="${esc(P.taxNo||'')}"></label></div>`:''}${needDocs(k,s).map(x=>upl(x,DOC_L[x],{req:1},'VF')).join('')}<button class="btn primary" onclick="submitVerif('${k}')">إرسال للمراجعة</button></div>`;
+ }
+ return `<div class="card" style="padding:18px;margin-bottom:12px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px"><h3>${T[0]}</h3>${stTag(st)}</div><p class="mut" style="margin-bottom:10px">${T[1]}</p>${body}</div>`;
+}
+function submitVerif(k){
+ const s=sel(USER.sellerId),need=needDocs(k,s);
+ if(need.some(x=>!VF[x])){toast('ارفع كل المستندات المطلوبة الأول');return}
+ if(k==='merchant'){const a=$('#v_cr').value.trim(),b=$('#v_tax').value.trim();if(!a||!b){toast('اكتب رقم السجل التجاري والبطاقة الضريبية');return}s.profile=s.profile||{};s.profile.crNo=a;s.profile.taxNo=b}
+ DB.verifs.push(mkV(s.id,k,need.map(x=>[DOC_L[x],VF[x]])));need.forEach(x=>delete VF[x]);save();toast('اتبعت للمراجعة ✅');route();
+}
+function verifyTab(s){
+ const mer=s.type==='merchant';
+ return `<div class="callout" style="margin:0 0 14px">الشارات بتتمنح بعد مراجعة المستندات فقط. الاشتراكات المدفوعة مالهاش علاقة بالتوثيق ومش بتزوّد ثقة المشتري.</div>
+ <div class="card" style="padding:18px;margin-bottom:12px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><h3>رقم الهاتف متحقق منه</h3>${stTag(s.badges.includes('phone')?'approved':'none')}</div><p class="mut">اتأكد بكود التأكيد وقت التسجيل.</p></div>
+ ${mer?vcard('merchant',s):''}${vcard('identity',s)}
+ <div class="card" style="padding:18px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><h3>بائع موثوق</h3>${s.badges.includes('trusted')?stTag('approved'):'<span class="tag">بالسجل</span>'}</div><p class="mut">بتتمنح تلقائياً بعد سجل تعاملات ناجحة وتقييمات كويسة وبدون شكاوى مؤكدة. مفيش طريقة لطلبها أو شرائها.</p></div>`;
+}
+function profileTab(s){
+ const P=s.profile||{},mer=s.type==='merchant';
+ return `<form class="form card" style="padding:20px" onsubmit="saveProfile(event)"><h3>${mer?'بيانات المحل':'ملفك العام'}</h3>
+ <label>${mer?'اسم النشاط':'الاسم المعروض للمشترين'}<input id="p_name" required value="${esc(s.name)}">${mer&&s.badges.includes('merchant')?'<span class="hnt">تغيير الاسم هيلغي شارة «تاجر موثّق» لحد ما نراجع التغيير.</span>':''}</label>
+ ${mer?`<div class="two"><label>نوع النشاط<select id="p_act">${ACTS.map(a=>`<option ${P.activity===a?'selected':''}>${a}</option>`).join('')}</select></label><label>مواعيد العمل<input id="p_hours" value="${esc(P.hours||'')}"></label></div>`:''}
+ <div class="two"><label>المحافظة<select id="p_gov"><option value="">اختار…</option>${GOVS.map(g=>`<option ${P.gov===g?'selected':''}>${g}</option>`).join('')}</select></label><label>المنطقة<input id="p_area" value="${esc(P.area||'')}"></label></div>
+ ${mer?`<label>العنوان بالتفصيل (للتحقق فقط)<input id="p_addr" value="${esc(P.address||'')}"></label><div class="two"><label>واتساب للتواصل (يظهر علناً)<input id="p_wa" dir="ltr" style="text-align:start" value="${esc(P.whatsapp||'')}"></label><label>لينك فيسبوك / انستجرام<input id="p_web" dir="ltr" style="text-align:start" value="${esc(P.web||'')}"></label></div>`:`<label>رقم واتساب للتواصل (اختياري — يظهر للمشترين)<input id="p_wa" dir="ltr" inputmode="tel" style="text-align:start" placeholder="01XXXXXXXXX" value="${esc(P.whatsapp||'')}"></label>`}
+ <label>نبذة<textarea id="p_bio" rows="3" maxlength="300">${esc(P.bio||'')}</textarea></label>
+ <button class="btn primary" style="justify-self:start">حفظ التغييرات</button></form>`;
+}
+function saveProfile(ev){
+ ev.preventDefault();const s=sel(USER.sellerId),v=id=>($('#'+id)||{value:''}).value.trim();s.profile=s.profile||{};const P=s.profile,nn=v('p_name');
+ if(!nn){toast('الاسم مطلوب');return}
+ if(s.type==='merchant'){
+  if(v('p_wa')&&!okPhone(v('p_wa'))){toast('رقم الواتساب مش مظبوط');return}
+  if(nn!==s.name&&s.badges.includes('merchant')){
+   if(!confirm('تغيير اسم النشاط هيلغي شارة «تاجر موثّق» لحد ما نراجع التغيير. تكمّل؟'))return;
+   s.badges=s.badges.filter(b=>b!=='merchant');DB.verifs.push(mkV(s.id,'merchant',[['مراجعة تغيير اسم النشاط إلى: '+nn,'—']]));
+  }
+  P.activity=v('p_act');P.hours=v('p_hours');P.address=v('p_addr');P.whatsapp=v('p_wa')?normPhone(v('p_wa')):'';P.web=v('p_web');
+ }
+ else{if(v('p_wa')&&!okPhone(v('p_wa'))){toast('رقم الواتساب مش مظبوط');return}P.whatsapp=v('p_wa')?normPhone(v('p_wa')):''}
+ s.name=nn;P.bio=v('p_bio');P.gov=v('p_gov');P.area=v('p_area');s.city=(P.area?P.area+' – ':'')+P.gov||s.city;
+ save();USER.name=s.name;renderHeader();toast('اتحفظ الملف');route();
+}
+function devTab(mine,mer,stl){
+ return mine.length?`<div class="scroll-x"><table class="tbl"><tr><th>الجهاز</th><th>السعة</th><th>البطارية</th><th>السعر (جنيه)</th><th>الحالة</th><th>التحقق</th><th></th></tr>${mine.map(l=>`<tr><td><a href="#/device/${l.id}"><b>${nm(l)}</b></a></td><td>${l.storage}</td><td>${l.battery}%</td><td><input type="number" value="${l.price}" min="0" onchange="dashPrice('${l.id}',this.value)"></td><td>${l.status==='pending'?`<span class="tag warn">قيد المراجعة</span>`:l.status==='rejected'?`<span class="tag rej">اترفض</span><div class="hnt">${esc(l.reason||'')}</div><button class="btn soft sm" onclick="republish('${l.id}')">عدّل وأعد الإرسال</button>`:`<select onchange="dashStatus('${l.id}',this.value)">${['active','paused','sold'].map(v=>`<option value="${v}" ${l.status===v?'selected':''}>${stl[v]}</option>`).join('')}</select>`}</td><td>${vtag(l)}</td><td><button class="icbtn" title="حذف" onclick="dashDel('${l.id}')">${I('trash',16)}</button></td></tr>`).join('')}</table></div>${mer?'':`<div class="callout">حساب الفرد بيعرض جهاز واحد في المرة. علّم إعلانك "اتباع" عشان تضيف جهاز جديد.</div>`}`
+ :`<div class="card empty"><div class="ico-b">${I('phone',24)}</div><h3>لسه مفيش أجهزة</h3><p>ضيف جهازك من الزرار فوق أو من المحادثة.</p></div>`;
+}
+function inqTab(inq){
+ return inq.length?`<div style="display:grid;gap:10px">${inq.map(q=>{const l=byId(q.listing);return `<div class="card" style="padding:14px 18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:220px"><b>${esc(q.name)}</b> <span class="mut" style="font-size:13px">· ${q.time}</span>${q.status==='new'?' <span class="tag mer">جديد</span>':''}<div>${esc(q.msg)}</div><div class="mut" style="font-size:13px">بخصوص: ${l?nm(l)+' '+l.storage:'—'} · ${esc(q.phone)}</div></div>${waNum(q.phone)?`<button class="btn wa sm" onclick="waBuyer('${q.id}')">${WA_SVG} رد واتساب</button>`:''}${q.status==='new'?`<button class="btn soft sm" onclick="inqRead('${q.id}')">علّم كمقروء</button>`:''}</div>`}).join('')}</div>`:'<div class="card empty">مفيش استفسارات لسه.</div>';
+}
+function viewDash(){
+ if(!USER||!['merchant','individual'].includes(USER.role))return gate('لوحة البيع','الصفحة دي للتجار والأفراد البائعين. سجّل دخول أو اعمل حساب.');
+ const s=sel(USER.sellerId),mine=DB.listings.filter(l=>l.seller===s.id),inq=DB.inquiries.filter(q=>q.seller===s.id),mer=USER.role==='merchant';
+ const stl={active:'متاح',paused:'موقوف',sold:'اتباع',pending:'قيد المراجعة'};
+ const open=k=>{const v=vstatus(s.id,k);return !s.badges.includes(k)&&!(v&&v.status==='pending')};
+ const todo=(mer&&open('merchant')?1:0)+(open('identity')?1:0);
+ let body;
+ if(DT==='verify')body=verifyTab(s);else if(DT==='profile')body=profileTab(s);else if(DT==='inq')body=inqTab(inq);else body=devTab(mine,mer,stl);
+ $('#app').innerHTML=`<div class="wrap page"><div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center"><div><h1>${mer?'لوحة التاجر':'لوحة البائع'} – ${esc(s.name)}</h1><div class="meta">${s.badges.map(b=>`<span class="tag ${b==='merchant'?'mer':'ok'}">${I('check',12)} ${BADGES[b]}</span>`).join('')}</div></div>
+  <div style="display:flex;gap:8px"><a class="btn ghost" href="#/seller/${s.id}">شوف ملفي العام</a><button class="btn primary" onclick="openAdd()">${I('plus',16)} إضافة جهاز</button></div></div>
+ ${mer&&open('merchant')?`<div class="callout" style="margin:14px 0 0">حسابك لسه مش موثّق كتاجر — إعلاناتك بتظهر من غير شارة «تاجر موثّق». <button class="lnk" onclick="DT='verify';route()">كمّل التوثيق</button></div>`:''}
+ <div class="stats"><div class="card stat"><b>${mine.filter(l=>l.status==='active').length}</b><span>إعلانات متاحة</span></div><div class="card stat"><b>${mine.filter(l=>l.status==='pending').length}</b><span>قيد المراجعة</span></div><div class="card stat"><b>${mine.filter(l=>l.status==='sold').length}</b><span>اتباع</span></div><div class="card stat"><b>${inq.filter(q=>q.status==='new').length}</b><span>استفسارات جديدة</span></div></div>
+ <div class="tabs"><button class="${DT==='devices'?'on':''}" onclick="DT='devices';route()">${mer?'المخزون':'جهازي'}</button><button class="${DT==='inq'?'on':''}" onclick="DT='inq';route()">الاستفسارات (${inq.length})</button><button class="${DT==='verify'?'on':''}" onclick="DT='verify';route()">التوثيق${todo?` <span class="tag warn">${todo}</span>`:''}</button><button class="${DT==='profile'?'on':''}" onclick="DT='profile';route()">الملف الشخصي</button></div>${body}</div>`;
+}
+
+/* =========================================================
+   Publish a device (mandatory data + device photos + settings screenshots)
+   Device photos = public. Settings screenshots = private evidence (review team only).
+   ========================================================= */
+const COLORS=['أسود','أبيض','أزرق','وردي','أخضر','بنفسجي','ذهبي','تيتانيوم','برتقالي','أحمر','لون تاني'];
+const PARTS_O=[['none','لا، كله أصلي'],['screen','الشاشة اتغيرت'],['battery','البطارية اتغيرت'],['other','قطع تانية']];
+const DEF_O=[['none','مفيش، زي الجديد'],['minor','خدوش بسيطة'],['major','خدوش واضحة'],['broken','كسر أو عيب في الشاشة/الجسم']];
+const ACC_O=[['box','العلبة الأصلية'],['charger','شاحن'],['cable','كابل'],['invoice','فاتورة شراء']];
+const PUB_STEPS=[['info','بيانات الجهاز'],['extras','المشتملات والضمان'],['photos','صور الجهاز'],['shots','لقطات الإعدادات'],['review','السعر والنشر']];
+const PHOTO_SLOTS=[['front','الواجهة الأمامية','الشاشة مفتوحة وباين عليها الصفحة الرئيسية',1],['back','الظهر','الغطاء الخلفي كامل',1],['sides','الجوانب والإطار','الإطار والأزرار من الجنب',1],['camera','الكاميرا','العدسات والفلاش من قريب',1],['defect','العيوب / الخدوش','صوّر كل عيب أو خدش ذكرته',0]];
+const SHOT_SLOTS=[['battery','صحة البطارية','الإعدادات ← البطارية ← صحة البطارية وشحنها',1],['about','معلومات الجهاز','الإعدادات ← عام ← حول (الموديل والسعة)',1],['storage','مساحة التخزين','الإعدادات ← عام ← مساحة الآيفون',0],['parts','قطع الغيار وسجل الخدمة','الإعدادات ← عام ← حول ← قطع الغيار وسجل الخدمة (لو ظاهرة عندك)',0]];
+const PARTS_T={none:'مفيش قطع متغيرة (حسب إفصاح البائع)',screen:'الشاشة اتغيرت',battery:'البطارية اتغيرت',other:'قطع تانية'};
+const DEF_T={none:'مفيش عيوب أو خدوش',minor:'خدوش بسيطة',major:'خدوش واضحة',broken:'كسر أو عيب في الشاشة/الجسم'};
+const WAR_T={none:'مفيش ضمان',apple:'ضمان أبل ساري',shop:'ضمان المحل'};
+const NET_T={factory:'فاكتوري (مفتوح على كل الشبكات)',locked:'مقفول على شبكة معيّنة',unknown:'مش متأكد'};
+let PUB=null,PUBDONE=null;
+const lphotos=l=>l.pubPhotos?PHOTO_SLOTS.map(s=>l.pubPhotos[s[0]]).filter(Boolean):(l.photos||[]);
+const lshots=l=>l.shots?SHOT_SLOTS.filter(s=>l.shots[s[0]]).map(s=>({key:s[0],label:s[1],src:l.shots[s[0]]})):[];
+const partsTxt=d=>PARTS_T[d.parts]+(d.partsNote?' — '+d.partsNote:'');
+const defTxt=d=>DEF_T[d.defects]+(d.defectsNote?' — '+d.defectsNote:'');
+function newPub(pre){return {step:0,photos:{},shots:{},replace:null,d:Object.assign({gen:'',variant:'',storage:'',color:'',battery:'',cond:'',parts:'none',partsNote:'',defects:'none',defectsNote:'',acc:[],warranty:'none',wMonths:'',icloud:false,network:'',imei:'',price:'',nego:false,shotsOk:false,again:false,decl:false},pre||{})}}
+function readImg(file,max,minSide){
+ return new Promise((res,rej)=>{
+  if(!file||!/^image\//.test(file.type))return rej('الملف لازم يكون صورة (JPG أو PNG)');
+  if(file.size>12*1024*1024)return rej('الصورة أكبر من 12 ميجا');
+  const fr=new FileReader();
+  fr.onerror=()=>rej('مقدرناش نقرا الصورة');
+  fr.onload=()=>{const im=new Image();im.onerror=()=>rej('الصورة تالفة أو مش مدعومة');
+   im.onload=()=>{if(Math.min(im.width,im.height)<minSide)return rej('الصورة صغيرة أوي — صوّر بجودة أعلى');
+    const k=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);
+    c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.7))};
+   im.src=fr.result};
+  fr.readAsDataURL(file);
+ });
+}
+function myCountExcept(id){return DB.listings.filter(l=>l.seller===(USER&&USER.sellerId)&&l.id!==id&&['active','paused','pending'].includes(l.status)).length}
+function openAdd(){
+ if(!USER||!['merchant','individual'].includes(USER.role)){openLogin({reason:'لازم حساب بائع عشان تنشر جهاز.',mode:'register'});return}
+ if(USER.role==='individual'&&myCount()>=1){toast('حساب الفرد بيعرض جهاز واحد في المرة. علّم الحالي "اتباع" الأول.');return}
+ PUB=newPub();PUBDONE=null;go('#/publish');
+}
+function toPublish(){
+ const want=S.seller==='merchant'?'merchant':'individual';
+ if(!USER||!['merchant','individual'].includes(USER.role)){openLogin({reason:'لازم حساب بائع (تاجر أو بائع حر) عشان تنشر إعلانك. ادخل أو اعمل حساب — محادثتك محفوظة وهتكمّل منها.',role:want,mode:USER?'register':'login',after:toPublish,back:'#/chat'});return}
+ if(USER.role==='individual'&&myCount()>=1){S.msgs.push({from:'bot',html:'حساب الفرد بيعرض جهاز واحد في المرة، وعندك إعلان شغال بالفعل. علّمه "اتباع" من لوحة البيع وبعدين ضيف جهاز تاني.'});S.acts=[{l:'روح لوحة البيع',pri:1,f:()=>go('#/dashboard')},{l:'ابدأ من جديد',f:restart}];S.pending='done';renderChat();return}
+ const a=S.ans,exact=/^\d+%$/.test(a.battery.l)?a.battery.v:'';
+ PUB=newPub({gen:String(a.model.v),variant:a.model.variant||'',storage:a.storage.v,cond:a.condition.v,battery:exact,
+  parts:a.parts.v==='custom'?'other':a.parts.v,partsNote:a.parts.v==='custom'?a.parts.l:'',
+  defects:a.defects.v==='custom'?'minor':a.defects.v,defectsNote:a.defects.v==='custom'?a.defects.l:'',price:String(a.price.v)});
+ PUBDONE=null;go('#/publish');
+}
+function republish(id){
+ const l=byId(id);if(!l)return;const f=l.form||{};
+ PUB=newPub(Object.assign({},f,{gen:String(l.gen),variant:l.variant,storage:l.storage,battery:String(l.battery),cond:l.cond,price:String(l.price)}));
+ PUB.photos=Object.assign({},l.pubPhotos||{});PUB.shots=Object.assign({},l.shots||{});PUB.replace=id;PUBDONE=null;go('#/publish');
+}
+/* field helpers */
+const pv=k=>esc(PUB.d[k]==null?'':PUB.d[k]);
+const lab=(t,req)=>`<span>${t}${req?' <span class="rq">*</span>':''}</span>`;
+const pfld=(id,label,o={})=>`<label>${lab(label,o.req)}<input id="p_${id}" type="${o.type||'text'}" value="${pv(id)}" ${o.attr||''} ${o.ph?`placeholder="${o.ph}"`:''} oninput="PUB.d.${id}=this.value">${o.hint?`<span class="hnt">${o.hint}</span>`:''}</label>`;
+const psel=(id,label,opts,o={})=>`<label>${lab(label,o.req)}<select id="p_${id}" onchange="PUB.d.${id}=this.value;${o.rerender?'renderPublish()':''}"><option value="">اختار…</option>${opts.map(x=>{const v=Array.isArray(x)?x[0]:x,l=Array.isArray(x)?x[1]:x;return `<option value="${v}" ${String(PUB.d[id])===String(v)&&v!==''?'selected':''}>${l}</option>`}).join('')}</select></label>`;
+const pchk=(id,text)=>`<label class="chkl"><input type="checkbox" ${PUB.d[id]?'checked':''} onchange="PUB.d.${id}=this.checked"> <span>${text}</span></label>`;
+function slotCard(store,s){
+ const src=PUB[store][s[0]];
+ return `<div class="slot ${src?'has':''}"><div class="slot-img">${src?`<img src="${src}" alt="" onclick="viewImg(this.src)" style="cursor:zoom-in">`:I('image',26)}</div><div style="flex:1;min-width:0"><b>${s[1]}</b>${s[3]?' <span class="rq">*</span>':' <span class="tag">اختياري</span>'}<div class="hnt">${s[2]}</div><div style="display:flex;gap:6px;margin-top:6px"><label class="btn ${src?'ghost':'primary'} sm" style="cursor:pointer">${src?'تغيير':'ارفع صورة'}<input type="file" accept="image/*" hidden onchange="pubFile('${store}','${s[0]}',this)"></label>${src?`<button type="button" class="btn danger sm" onclick="pubRm('${store}','${s[0]}')">حذف</button>`:''}</div></div></div>`;
+}
+async function pubFile(store,key,inp){
+ const f=inp.files[0];inp.value='';if(!f)return;
+ try{PUB[store][key]=await readImg(f,store==='shots'?800:1000,store==='shots'?300:400);renderPublish()}catch(e){toast(String(e))}
+}
+function pubRm(store,key){delete PUB[store][key];renderPublish()}
+function pubAcc(k,on){const a=PUB.d.acc;if(on&&!a.includes(k))a.push(k);if(!on)PUB.d.acc=a.filter(x=>x!==k)}
+function viewImg(src){openModal(`<img src="${src}" alt="" style="max-width:100%;border-radius:12px;display:block;margin:auto"><button class="btn ghost" style="margin-top:12px;width:100%" onclick="closeModal()">إغلاق</button>`)}
+
+function pubValidate(st){
+ const d=PUB.d,e=[],need=(k,m)=>{if(!String(d[k]==null?'':d[k]).trim())e.push(m)},mer=USER.role==='merchant';
+ if(st==='info'){
+  need('gen','اختار الموديل');need('storage','اختار سعة التخزين');need('color','اختار اللون');need('cond','اختار حالة الجهاز');
+  const b=+d.battery;if(!d.battery||!(b>=40&&b<=100))e.push('اكتب صحة البطارية بالظبط (رقم من 40 لـ 100) زي ما ظاهرة في الإعدادات');
+  if(d.parts!=='none'&&!String(d.partsNote).trim())e.push('اكتب تفاصيل القطع اللي اتغيرت (إيه اللي اتغير ومتى وفين)');
+  if(d.defects!=='none'&&!String(d.defectsNote).trim())e.push('اوصف العيوب أو الخدوش بالتفصيل');
+ }
+ if(st==='extras'){
+  if(!d.network)e.push('اختار حالة الشبكة (فاكتوري أو مقفول)');
+  if(!d.icloud)e.push('لازم تأكد إن الجهاز مسجّل خروج من iCloud وخاصية Find My مقفولة');
+  if(d.warranty==='shop'){const m=+d.wMonths;if(!(m>=1&&m<=24))e.push('اكتب مدة ضمان المحل بالشهور (من 1 لـ 24)')}
+  if(d.warranty==='apple'&&!d.acc.includes('invoice'))e.push('ضمان أبل لازم تقدّم معاه فاتورة الشراء — علّم "فاتورة شراء" أو غيّر الضمان');
+  if(d.imei&&!/^\d{15}$/.test(toEn(d.imei).replace(/\s/g,'')))e.push('رقم IMEI لازم يكون 15 رقم (أو سيبه فاضي)');
+ }
+ if(st==='photos'){
+  PHOTO_SLOTS.filter(s=>s[3]&&!PUB.photos[s[0]]).forEach(s=>e.push('ارفع صورة: '+s[1]));
+  if(d.defects!=='none'&&!PUB.photos.defect)e.push('ذكرت عيوب أو خدوش — ارفع صورة "العيوب / الخدوش"');
+ }
+ if(st==='shots'){
+  SHOT_SLOTS.filter(s=>s[3]&&!PUB.shots[s[0]]).forEach(s=>e.push('ارفع لقطة شاشة: '+s[1]));
+  if(d.parts!=='none'&&!PUB.shots.parts)e.push('ذكرت إن فيه قطع اتغيرت — ارفع لقطة "قطع الغيار وسجل الخدمة" (أو غيّر إجابتك في الخطوة الأولى لو مش ظاهرة عندك)');
+  if(!d.shotsOk)e.push('لازم تأكد إن البطارية والموديل والسعة المكتوبين مطابقين للقطات');
+ }
+ if(st==='review'){
+  const p=+d.price;if(!(p>=1000&&p<=300000))e.push('اكتب سعر صحيح بالجنيه (من 1,000 لـ 300,000)');
+  if(!d.decl)e.push('لازم تقرّ إن البيانات والصور حقيقية للجهاز المعروض');
+ }
+ return e;
+}
+function pubNext(){const e=pubValidate(PUB_STEPS[PUB.step][0]);if(e.length){showErr(e);return}PUB.step++;renderPublish();window.scrollTo(0,0)}
+function pubBack(){if(PUB.step>0){PUB.step--;renderPublish();window.scrollTo(0,0)}}
+const pubNav=(last)=>`<div id="rerr"></div><div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">${last?`<button class="btn primary" style="flex:1;min-width:160px" onclick="pubPublish()">انشر الجهاز للمراجعة</button>`:`<button class="btn primary" style="flex:1;min-width:140px" onclick="pubNext()">التالي</button>`}${PUB.step>0?`<button class="btn ghost" onclick="pubBack()">رجوع</button>`:''}</div>`;
+
+function pubStepHtml(st){
+ const d=PUB.d,mer=USER.role==='merchant';
+ const mo=modelOf(d.gen),vOpts=mo?mo.v:[['Pro','Pro'],['Pro Max','Pro Max']],sOpts=mo?mo.s:STORAGES;
+ if(d.variant&&!vOpts.some(x=>x[0]===d.variant))d.variant='';
+ if(d.storage&&!sOpts.includes(d.storage))d.storage='';
+ if(st==='info')return `<h2>بيانات الجهاز</h2><p class="mut" style="margin-bottom:12px">اكتب بيانات الجهاز بدقة — المشتري بيعتمد عليها.</p><div class="form">
+  <div class="two">${psel('gen','الموديل',ALL_MODELS.slice().reverse().map(m=>[m.g,m.l]),{req:1,rerender:1})}${psel('variant','الإصدار',(d.gen==='SE'?[]:[['','عادي']]).concat(vOpts))}</div>
+  <div class="two">${psel('storage','سعة التخزين',sOpts,{req:1})}${psel('color','اللون',COLORS,{req:1})}</div>
+  <div class="two">${pfld('battery','صحة البطارية %',{req:1,type:'number',attr:'min="40" max="100"',hint:'الرقم زي ما ظاهر في الإعدادات ← البطارية ← صحة البطارية.'})}${psel('cond','حالة الجهاز',[['excellent','ممتاز'],['vgood','جيد جداً'],['good','جيد']],{req:1})}</div>
+  <div class="two">${psel('parts','هل اتغير فيه قطع؟',PARTS_O,{req:1})}${pfld('partsNote','تفاصيل القطع المتغيرة',{hint:'مطلوب لو في قطع اتغيرت.'})}</div>
+  <div class="two">${psel('defects','عيوب أو خدوش؟',DEF_O,{req:1})}${pfld('defectsNote','وصف العيوب',{hint:'مطلوب لو في عيوب أو خدوش.'})}</div></div>${pubNav()}`;
+ if(st==='extras')return `<h2>المشتملات والضمان</h2><p class="mut" style="margin-bottom:12px">إيه اللي هيستلمه المشتري مع الجهاز؟</p><div class="form">
+  <div><div style="font-weight:500;margin-bottom:6px">المشتملات</div><div style="display:flex;gap:14px;flex-wrap:wrap">${ACC_O.map(a=>`<label class="chkl"><input type="checkbox" ${d.acc.includes(a[0])?'checked':''} onchange="pubAcc('${a[0]}',this.checked)"> <span>${a[1]}</span></label>`).join('')}</div></div>
+  <div class="two">${psel('warranty','الضمان',[['none','مفيش ضمان'],['apple','ضمان أبل ساري']].concat(mer?[['shop','ضمان المحل']]:[]),{req:1,rerender:1})}${d.warranty==='shop'?pfld('wMonths','مدة ضمان المحل (شهور)',{req:1,type:'number',attr:'min="1" max="24"'}):'<div></div>'}</div>
+  ${psel('network','حالة الشبكة',Object.entries(NET_T),{req:1})}
+  ${pchk('icloud','أؤكد إن الجهاز <b>مسجّل خروج من iCloud</b> وخاصية <b>Find My</b> مقفولة، وجاهز يتفعّل على حساب المشتري. <span class="rq">*</span>')}
+  ${pfld('imei','رقم IMEI (اختياري)',{attr:'inputmode="numeric" maxlength="15" dir="ltr" style="text-align:start"',hint:`${I('lock',12)} للمراجعة الداخلية بس — بيتخزّن خاص ومش بيتعرض لأي حد.`})}</div>${pubNav()}`;
+ if(st==='photos')return `<h2>صور الجهاز</h2><p class="mut" style="margin-bottom:10px">الصور دي هتظهر للمشترين.</p><div class="callout" style="margin:0 0 12px">صوّر الجهاز الحقيقي بنفسك: إضاءة كويسة، من غير فلاتر، والجهاز كله باين. صور من النت أو لجهاز تاني بتتعمل لها رفض. الصور بتتصغّر تلقائياً وبتتحفظ على جهازك في النسخة التجريبية.</div>
+  <div class="slots">${PHOTO_SLOTS.map(s=>slotCard('photos',s)).join('')}</div>${pubNav()}`;
+ if(st==='shots')return `<h2>لقطات إعدادات الجهاز</h2><p class="mut" style="margin-bottom:10px">اللقطات دي بتثبت إن البيانات اللي كتبتها حقيقية.</p><div class="callout" style="margin:0 0 12px">${I('lock',14)} <b>خاصة:</b> لقطات الإعدادات بيشوفها فريق المراجعة بس، ومش بتظهر للمشترين. بعد مطابقتها بالبيانات المكتوبة، الإعلان بياخد مستوى «البيانات متراجعة». ده مش اختبار أو فحص فني للجهاز.</div>
+  <div class="slots">${SHOT_SLOTS.map(s=>slotCard('shots',s)).join('')}</div>
+  <div class="form" style="margin-top:14px">${pchk('shotsOk',`أؤكد إن <b>صحة البطارية (${esc(d.battery||'—')}%)</b> و<b>الموديل والسعة (iPhone ${esc(d.gen||'—')}${d.variant?' '+esc(d.variant):''} · ${esc(d.storage||'—')})</b> مطابقين للقطات. <span class="rq">*</span>`)}</div>${pubNav()}`;
+ if(st==='review'){
+  const est=d.gen&&d.storage?Backend.marketEstimate(+d.gen,d.storage):null,ph=PHOTO_SLOTS.filter(s=>PUB.photos[s[0]]),sh=SHOT_SLOTS.filter(s=>PUB.shots[s[0]]);
+  const rows=[['الجهاز',`iPhone ${d.gen}${d.variant?' '+d.variant:''} · ${d.storage} · ${d.color}`],['البطارية والحالة',`${d.battery}% · ${COND[d.cond].t}`],['القطع المتغيرة',partsTxt(d)],['العيوب',defTxt(d)],['المشتملات',d.acc.length?d.acc.map(k=>ACC_O.find(a=>a[0]===k)[1]).join('، '):'مفيش'],['الضمان',WAR_T[d.warranty]+(d.warranty==='shop'?' ('+d.wMonths+' شهر)':'')],['الشبكة',NET_T[d.network]],['iCloud','مسجّل خروج (إقرار البائع)']];
+  return `<h2>السعر والنشر</h2><p class="mut" style="margin-bottom:12px">راجع كل حاجة قبل ما تنشر.</p>
+  <table class="sumtab">${rows.map(r=>`<tr><td>${r[0]}</td><td>${esc(r[1])}</td></tr>`).join('')}</table>
+  <div class="meta" style="margin:12px 0">${ph.map(s=>`<img src="${PUB.photos[s[0]]}" alt="${s[1]}" title="${s[1]}" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--bd);cursor:zoom-in" onclick="viewImg(this.src)">`).join('')}</div>
+  <div class="hnt" style="margin-bottom:12px">${ph.length} صور للجهاز (عامة) · ${sh.length} لقطات إعدادات (خاصة)</div>
+  <div class="form">${pfld('price','السعر المطلوب (جنيه)',{req:1,type:'number',attr:'min="1000"',hint:est?`للمقارنة: متوسط المعروض لنفس الموديل والسعة حوالي ${fmt(est.est)} جنيه (من ${est.n} إعلانات، من ${fmt(est.min)} لـ ${fmt(est.max)}).`:'مفيش إعلانات كفاية لنفس الموديل والسعة عشان أقدّر لك سعر مقارنة.'})}
+  ${pchk('nego','السعر قابل للتفاوض')}${mer&&!PUB.replace?pchk('again','عايز أضيف جهاز تاني بعد النشر'):''}
+  ${pchk('decl','أقرّ إن كل البيانات والصور حقيقية للجهاز المعروض، وإني فاهم إن الإعلان بيتراجع قبل النشر وممكن يترفض. <span class="rq">*</span>')}</div>${pubNav(1)}`;
+ }
+ return '';
+}
+function renderPublish(){
+ const st=PUB_STEPS[PUB.step][0];
+ const stepper=`<div class="stepper">${PUB_STEPS.map((s,i)=>`<div class="st ${i<PUB.step?'done':i===PUB.step?'on':''}"><i>${i<PUB.step?'✓':i+1}</i><span>${s[1]}</span></div>`).join('')}</div>`;
+ $('#app').innerHTML=`<div class="wrap page" style="max-width:820px"><a class="crumb" href="#/dashboard">${I('back',14)} لوحة البيع</a><h1>${PUB.replace?'تعديل وإعادة إرسال الإعلان':'نشر جهاز جديد'}</h1><p class="mut" style="margin-bottom:14px">كل الحقول المعلّمة بـ <span class="rq">*</span> إجبارية، والصور ولقطات الإعدادات لازم تتحط قبل النشر.</p><div class="card" style="padding:24px">${stepper}${pubStepHtml(st)}</div></div>`;
+}
+function viewPublish(){
+ if(!USER||!['merchant','individual'].includes(USER.role))return gate('نشر جهاز','لازم حساب بائع (تاجر أو بائع حر) عشان تنشر جهاز.');
+ if(PUBDONE&&!PUB)return renderPubDone();
+ if(!PUB)PUB=newPub();
+ if(USER.role==='individual'&&myCountExcept(PUB.replace)>=1){$('#app').innerHTML=`<div class="wrap page"><div class="card empty"><div class="ico-b">${I('phone',24)}</div><h3>عندك إعلان شغال بالفعل</h3><p>حساب الفرد بيعرض جهاز واحد في المرة. علّم الإعلان الحالي "اتباع" عشان تنشر جهاز تاني.</p><br><button class="btn primary" onclick="go('#/dashboard')">لوحة البيع</button></div></div>`;return}
+ renderPublish();
+}
+function pubPublish(){
+ const order=PUB_STEPS.map(s=>s[0]);
+ for(let i=0;i<order.length;i++){const e=pubValidate(order[i]);if(e.length){PUB.step=i;renderPublish();showErr(e);return}}
+ if(USER.role==='individual'&&myCountExcept(PUB.replace)>=1){toast('حساب الفرد بيعرض جهاز واحد في المرة');return}
+ const d=PUB.d;
+ if(PUB.replace)DB.listings=DB.listings.filter(l=>l.id!==PUB.replace);
+ const l={id:'L'+Date.now(),gen:/^\d+$/.test(d.gen)?+d.gen:d.gen,variant:d.variant,storage:d.storage,battery:+d.battery,cond:d.cond,price:+d.price,seller:USER.sellerId,level:1,color:d.color,status:'pending',sample:false,insp:null,
+  parts:partsTxt(d),defects:defTxt(d),acc:d.acc.slice(),warranty:WAR_T[d.warranty]+(d.warranty==='shop'?' ('+d.wMonths+' شهر)':''),network:NET_T[d.network],icloud:true,nego:!!d.nego,date:'نوفمبر 2026',
+  form:Object.assign({},d,{acc:d.acc.slice()}),pubPhotos:Object.assign({},PUB.photos),shots:Object.assign({},PUB.shots)};
+ DB.listings.unshift(l);save();PUBDONE={l,again:!!d.again};PUB=null;
+ if(PUBDONE.again){toast('اتبعت للمراجعة ✅ — ابدأ الجهاز التالي');PUB=newPub();PUBDONE=null;renderPublish();window.scrollTo(0,0);return}
+ renderPubDone();window.scrollTo(0,0);
+}
+function renderPubDone(){
+ const l=PUBDONE.l;
+ $('#app').innerHTML=`<div class="wrap page" style="max-width:640px"><div class="card" style="padding:28px;text-align:center"><div class="ico-b" style="margin:0 auto 12px;background:var(--okl);color:var(--ok)">${I('check',26)}</div><h2>اتبعت للمراجعة ✅</h2><p class="mut" style="margin:6px 0 14px">${nm(l)} · ${l.storage} · ${fmt(l.price)} جنيه</p>
+ <div class="vlevels" style="text-align:start"><div class="vl on">${I('check',16)}<div><b>اتسجّلت كل البيانات</b><div class="mut">${lphotos(l).length} صور للجهاز و${lshots(l).length} لقطات إعدادات.</div></div></div><div class="vl">${I('lock',16)}<div><b>الخطوة الجاية: مراجعة</b><div class="mut">فريق المراجعة بيطابق بياناتك بلقطات الإعدادات وبعدين الإعلان يظهر للمشترين بمستوى «البيانات متراجعة». لو فيه مشكلة هتلاقي السبب في لوحتك وتعدّل وتبعت تاني.</div></div></div></div>
+ <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;justify-content:center"><a class="btn primary" href="#/dashboard">لوحة البيع</a><a class="btn ghost" href="#/device/${l.id}">شوف الإعلان</a>${USER.role==='merchant'?`<button class="btn ghost" onclick="PUBDONE=null;openAdd()">انشر جهاز تاني</button>`:''}</div></div></div>`;
+}
+
+/* =========================================================
+   Header, router, boot
+   ========================================================= */
+let MENU=false;
+function toggleMenu(){MENU=!MENU;renderHeader()}
+function go(h){MENU=false;if(location.hash===h)route();else location.hash=h}
+function renderHeader(){
+ const p=(location.hash.replace(/^#\/?/,'')||'').split('/');
+ const key=p[0]==='chat'?(p[1]||S.journey||'chat'):p[0]||'home';
+ const L=[['#/','الرئيسية','home'],['#/chat/buy','شراء آيفون','buy'],['#/chat/sell','بيع موبايلك','sell'],['#/chat/trade','تبديل','trade'],['#/about','عن المنصة','about']];
+ const dash=USER&&(USER.role!=='customer'?`<a class="btn soft sm" href="#/dashboard">لوحتي</a>`:'');
+ $('#hdr').innerHTML=`<div class="hdr-in"><a class="logo" href="#/"><span class="logo-mark">${I('search',20)}</span><span>دورلي</span></a>
+ <nav class="nav ${MENU?'open':''}">${L.map(l=>`<a href="${l[0]}" class="${key===l[2]?'on':''}" onclick="MENU=false">${l[1]}</a>`).join('')}</nav>
+ <div class="hdr-act">${USER?`${dash}<div class="userchip"><span class="nm">${esc(USER.name)}</span><span class="avatar-s">${esc(USER.name[0])}</span></div><button class="icbtn" title="خروج" onclick="logout()">${I('x',16)}</button>`:`<button class="btn primary sm" onclick="openLogin({})">${I('user',15)} دخول / تسجيل</button>`}<button class="burger" onclick="toggleMenu()" aria-label="القائمة">${I('menu')}</button></div></div>`;
+ $('#demo-bar').innerHTML=DEMO?`وضع تجريبي: كل الأجهزة والأسعار والبائعين بيانات عينة لأغراض العرض فقط.<button onclick="setDemo(false)">إيقاف الوضع التجريبي</button>`:`الوضع التجريبي مقفول — بتظهر بس الإعلانات اللي اتضافت فعلياً.<button onclick="setDemo(true)">تشغيل الوضع التجريبي</button>`;
+}
+function setDemo(v){DEMO=v;LS.set('dorly_demo',v);route()}
+function route(){
+ const parts=(location.hash.replace(/^#\/?/,'')||'').split('/'),p=parts[0],a=parts[1];
+ renderHeader();
+ if(p==='admin'){location.replace('admin.html');return}
+ if(p==='chat')viewChat(a);
+ else if(p==='results')viewResults();
+ else if(p==='compare')viewCompare();
+ else if(p==='device')viewDevice(a);
+ else if(p==='seller')viewSeller(a);
+ else if(p==='dashboard')viewDash();
+ else if(p==='auth')viewAuth(a);
+ else if(p==='publish')viewPublish();
+ else if(p==='about')viewAbout();
+ else viewHome();
+ if(!NOSCROLL&&p!=='chat')window.scrollTo(0,0);
+ NOSCROLL=false;
+}
+window.addEventListener('hashchange',route);
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
+(async function boot(){
+ $('#app').innerHTML='<div class="wrap page"><p class="mut" style="text-align:center;padding:60px 0">جاري التحميل…</p></div>';
+ try{DB=await Cloud.load();setSession();if(Cloud.disabledNotice)toast('الحساب ده موقوف. تواصل مع الدعم.')}
+ catch(e){console.error(e);toast('مشكلة في الاتصال — جرّب تحدّث الصفحة')}
+ route();
+})();
+</script>
+</body>
+</html>
