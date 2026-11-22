@@ -873,7 +873,7 @@ function viewDevice(id){
   ${l.status!=='active'?`<span class="tag warn">الحالة: ${l.status==='pending'?'قيد المراجعة':l.status==='paused'?'موقوف':'اتباع'}</span>`:''}
   <div class="price" style="font-size:34px;margin:6px 0">${fmt(l.price)} <small>جنيه</small></div>
   <div class="kv"><div><small>صحة البطارية</small><b>${l.battery}%</b></div><div><small>الحالة</small><b>${COND[l.cond].t}</b></div><div><small>القطع المتغيرة</small>${esc(l.parts||'—')}</div><div><small>العيوب والخدوش</small>${esc(l.defects||'—')}</div><div><small>اللون</small>${l.color}</div><div><small>تاريخ الإعلان</small>${l.date}</div>${l.acc?`<div><small>المشتملات</small>${l.acc.length?l.acc.map(k=>ACC_O.find(a=>a[0]===k)[1]).join('، '):'الجهاز بس'}</div><div><small>الضمان</small>${esc(l.warranty||'—')}</div><div><small>الشبكة</small>${esc(l.network||'—')}</div><div><small>iCloud</small>${l.icloud?'مسجّل خروج (إقرار البائع)':'—'}</div>`:''}</div>
-  <div class="dev-act"><button class="btn primary" onclick="contact('${l.id}')">${I('msg',16)} تواصل مع البائع</button>${sellerWa(sel(l.seller))?`<button class="btn wa" onclick="waSeller('${l.id}')">${WA_SVG} واتساب</button>`:''}<button class="btn ghost" onclick="S.cmp.includes('${l.id}')||S.cmp.length>=3||S.cmp.push('${l.id}');go('#/compare')">${I('scale',16)} أضف للمقارنة</button></div>
+  <div class="dev-act"><button class="btn primary" onclick="contact('${l.id}')">${I('msg',16)} تواصل مع البائع</button>${listingWa(l)?`<button class="btn wa" onclick="waSeller('${l.id}')">${WA_SVG} واتساب</button>`:''}<button class="btn ghost" onclick="S.cmp.includes('${l.id}')||S.cmp.length>=3||S.cmp.push('${l.id}');go('#/compare')">${I('scale',16)} أضف للمقارنة</button></div>
   <div class="card sbox"><div class="avatar-s" style="width:46px;height:46px;font-size:18px">${esc(s.name[0])}</div><div style="flex:1"><a href="#/seller/${s.id}"><b>${esc(s.name)}</b></a> <span class="tag ${s.type==='merchant'?'mer':''}">${sType(s)}</span><div style="margin:4px 0">${s.badges.map(b=>`<span class="tag ${b==='merchant'?'mer':'ok'}" style="margin-inline-end:4px">${I('check',12)} ${BADGES[b]}</span>`).join('')||'<span class="tag warn">غير موثّق</span>'}</div><div class="mut" style="font-size:13px">${I('pin',13)} ${esc(s.city)}</div></div><a class="btn ghost sm" href="#/seller/${s.id}">الملف</a></div>
   ${lshots(l).length?`<div class="callout" style="background:#EFF6FF;border-color:#BFDBFE;color:#1E3A8A">${I('lock',14)} البائع قدّم ${lshots(l).length} لقطات من إعدادات الجهاز للمراجعة (خاصة ومش معروضة). ${l.level>=2?'اتطابقت مع البيانات المكتوبة.':'لسه تحت المراجعة.'}</div>`:''}
   <h3>مستوى التحقق من الجهاز</h3>
@@ -920,7 +920,7 @@ function contact(id,kind){
  openModal(`<h2>تواصل مع ${esc(s.name)}</h2><p class="mut" style="margin-bottom:10px">${nm(l)} · ${l.storage} · ${fmt(l.price)} جنيه</p>
  <form class="form" onsubmit="sendInq(event,'${id}')"><label>اسمك<input id="q_n" required value="${USER?esc(USER.name):''}"></label><label>رقم موبايلك (بيوصل للبائع بس)<input id="q_p" required inputmode="tel" placeholder="01XXXXXXXXX" value="${USER&&USER.phone?esc(USER.phone):''}"></label>
  <label>رسالتك<textarea id="q_m" rows="3">${kind==='trade'?'السلام عليكم، عايز أبدّل جهازي بالجهاز ده. ينفع نتفق على الفرق؟':'السلام عليكم، الجهاز لسه متاح؟'}</textarea></label>
- <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" style="flex:1">إرسال</button>${sellerWa(s)?`<button type="button" class="btn wa" style="flex:1" onclick="waSeller('${id}')">${WA_SVG} كلّمه واتساب</button>`:''}<button type="button" class="btn ghost" onclick="closeModal()">إلغاء</button></div>${sellerWa(s)?'':'<p class="mut" style="font-size:13px;margin-top:6px">البائع ده مضافش رقم واتساب — ابعتله رسالة من هنا وهيرد عليك.</p>'}</form>`);
+ <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" style="flex:1">إرسال</button>${listingWa(l)?`<button type="button" class="btn wa" style="flex:1" onclick="waSeller('${id}')">${WA_SVG} كلّمه واتساب</button>`:''}<button type="button" class="btn ghost" onclick="closeModal()">إلغاء</button></div>${listingWa(l)?'':'<p class="mut" style="font-size:13px;margin-top:6px">البائع ده مضافش رقم واتساب — ابعتله رسالة من هنا وهيرد عليك.</p>'}</form>`);
 }
 function sendInq(ev,id){ev.preventDefault();const l=byId(id);
  DB.inquiries.unshift({id:'Q'+Date.now(),seller:l.seller,listing:id,name:$('#q_n').value,phone:$('#q_p').value,msg:$('#q_m').value,time:'دلوقتي',status:'new',sample:false});
@@ -944,9 +944,10 @@ const sellerWa=s=>!!(s&&s.profile&&(s.profile.wa||waNum(s.profile.whatsapp)));
 /* contacting anyone needs an account; after login the action continues */
 function needLogin(reason,after){if(USER)return false;openLogin({reason,after});return true}
 /* open WhatsApp with a seller's number, fetched only for signed-in members */
-async function openSellerWa(sid,msg){
+const listingWa=l=>!!(l&&(l.wa||sellerWa(sel(l.seller))));
+async function openSellerWa(sid,msg,lid){
  const w=window.open('about:blank','_blank');
- const n=waNum(await Cloud.sellerWhatsapp(sid));
+ const n=waNum(lid?await Cloud.listingWhatsapp(lid):await Cloud.sellerWhatsapp(sid));
  if(!n){if(w)w.close();toast('البائع ده مضافش رقم واتساب — ابعتله رسالة من الموقع');return}
  const url=waUrl(n,msg);if(w){w.opener=null;w.location.href=url}else location.href=url;
 }
@@ -954,7 +955,7 @@ function waProfile(sid){if(needLogin('اعمل حساب أو سجّل دخول �
 const WA_SVG=`<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.7.5-.1 1.5-.6 1.8-1.2.2-.6.2-1.1.1-1.2l-.5-.3z"/></svg>`;
 function waSeller(id){const l=byId(id);if(!l)return;if(needLogin('اعمل حساب أو سجّل دخول عشان تتواصل مع البائع.',()=>waSeller(id)))return;
  const m=($('#q_m')||{}).value||'السلام عليكم، الجهاز لسه متاح؟';
- openSellerWa(l.seller,`${m}\n\n${nm(l)} · ${l.storage} · ${fmt(l.price)} جنيه (إعلان على دورلي)`)}
+ openSellerWa(l.seller,`${m}\n\n${nm(l)} · ${l.storage} · ${fmt(l.price)} جنيه (إعلان على دورلي)`,l.id)}
 function waBuyer(qid){const q=DB.inquiries.find(x=>x.id===qid),n=q&&waNum(q.phone);if(!n)return;const l=byId(q.listing),s=sel(USER.sellerId);
  if(q.status==='new'){q.status='read';save()}
  window.open(waUrl(n,`أهلاً ${q.name}، معاك ${s?s.name:''} من دورلي بخصوص استفسارك عن ${l?nm(l)+' '+l.storage:'الجهاز'}.`),'_blank','noopener');route()}
@@ -1275,7 +1276,7 @@ const lphotos=l=>l.pubPhotos?PHOTO_SLOTS.map(s=>l.pubPhotos[s[0]]).filter(Boolea
 const lshots=l=>l.shots?SHOT_SLOTS.filter(s=>l.shots[s[0]]).map(s=>({key:s[0],label:s[1],src:l.shots[s[0]]})):[];
 const partsTxt=d=>PARTS_T[d.parts]+(d.partsNote?' — '+d.partsNote:'');
 const defTxt=d=>DEF_T[d.defects]+(d.defectsNote?' — '+d.defectsNote:'');
-function newPub(pre){return {step:0,photos:{},shots:{},replace:null,d:Object.assign({gen:'',variant:'',storage:'',color:'',battery:'',cond:'',parts:'none',partsNote:'',defects:'none',defectsNote:'',acc:[],warranty:'none',wMonths:'',icloud:false,network:'',imei:'',price:'',nego:false,shotsOk:false,again:false,decl:false},pre||{})}}
+function newPub(pre){const sp=USER&&USER.sellerId?(sel(USER.sellerId).profile||{}):{};return {step:0,photos:{},shots:{},replace:null,d:Object.assign({whatsapp:sp.whatsapp||'',gen:'',variant:'',storage:'',color:'',battery:'',cond:'',parts:'none',partsNote:'',defects:'none',defectsNote:'',acc:[],warranty:'none',wMonths:'',icloud:false,network:'',imei:'',price:'',nego:false,shotsOk:false,again:false,decl:false},pre||{})}}
 function readImg(file,max,minSide){
  return new Promise((res,rej)=>{
   if(!file||!/^image\//.test(file.type))return rej('الملف لازم يكون صورة (JPG أو PNG)');
@@ -1355,6 +1356,7 @@ function pubValidate(st){
  }
  if(st==='review'){
   const p=+d.price;if(!(p>=1000&&p<=300000))e.push('اكتب سعر صحيح بالجنيه (من 1,000 لـ 300,000)');
+  if(!okPhone(d.whatsapp||''))e.push('اكتب رقم واتساب صحيح للتواصل (مثلاً 01012345678)');
   if(!d.decl)e.push('لازم تقرّ إن البيانات والصور حقيقية للجهاز المعروض');
  }
  return e;
@@ -1393,6 +1395,7 @@ function pubStepHtml(st){
   <div class="meta" style="margin:12px 0">${ph.map(s=>`<img src="${PUB.photos[s[0]]}" alt="${s[1]}" title="${s[1]}" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--bd);cursor:zoom-in" onclick="viewImg(this.src)">`).join('')}</div>
   <div class="hnt" style="margin-bottom:12px">${ph.length} صور للجهاز (عامة) · ${sh.length} لقطات إعدادات (خاصة)</div>
   <div class="form">${pfld('price','السعر المطلوب (جنيه)',{req:1,type:'number',attr:'min="1000"',hint:est?`للمقارنة: متوسط المعروض لنفس الموديل والسعة حوالي ${fmt(est.est)} جنيه (من ${est.n} إعلانات، من ${fmt(est.min)} لـ ${fmt(est.max)}).`:'مفيش إعلانات كفاية لنفس الموديل والسعة عشان أقدّر لك سعر مقارنة.'})}
+  ${pfld('whatsapp','رقم واتساب للتواصل',{req:1,type:'tel',ph:'01XXXXXXXXX',attr:'inputmode="tel" dir="ltr" style="text-align:start"',hint:`${I('lock',12)} المشترين بيكلّموك عليه من زرار «واتساب» في الإعلان (لازم يكونوا عاملين حساب). الرقم نفسه مش بيتعرض في الإعلان.`})}
   ${pchk('nego','السعر قابل للتفاوض')}${mer&&!PUB.replace?pchk('again','عايز أضيف جهاز تاني بعد النشر'):''}
   ${pchk('decl','أقرّ إن كل البيانات والصور حقيقية للجهاز المعروض، وإني فاهم إن الإعلان بيتراجع قبل النشر وممكن يترفض. <span class="rq">*</span>')}</div>${pubNav(1)}`;
  }
@@ -1414,10 +1417,10 @@ function pubPublish(){
  const order=PUB_STEPS.map(s=>s[0]);
  for(let i=0;i<order.length;i++){const e=pubValidate(order[i]);if(e.length){PUB.step=i;renderPublish();showErr(e);return}}
  if(USER.role==='individual'&&myCountExcept(PUB.replace)>=1){toast('حساب الفرد بيعرض جهاز واحد في المرة');return}
- const d=PUB.d;
+ const d=PUB.d;d.whatsapp=normPhone(d.whatsapp||'');
  const old=PUB.replace?byId(PUB.replace):null;
  if(PUB.replace)DB.listings=DB.listings.filter(l=>l.id!==PUB.replace);
- const l={id:old?old.id:'L'+Date.now(),pay:old&&old.pay?old.pay:{amount:LISTING_FEE,currency:'EGP',status:'unpaid'},gen:/^\d+$/.test(d.gen)?+d.gen:d.gen,variant:d.variant,storage:d.storage,battery:+d.battery,cond:d.cond,price:+d.price,seller:USER.sellerId,level:1,color:d.color,status:'pending',sample:false,insp:null,
+ const l={id:old?old.id:'L'+Date.now(),wa:true,pay:old&&old.pay?old.pay:{amount:LISTING_FEE,currency:'EGP',status:'unpaid'},gen:/^\d+$/.test(d.gen)?+d.gen:d.gen,variant:d.variant,storage:d.storage,battery:+d.battery,cond:d.cond,price:+d.price,seller:USER.sellerId,level:1,color:d.color,status:'pending',sample:false,insp:null,
   parts:partsTxt(d),defects:defTxt(d),acc:d.acc.slice(),warranty:WAR_T[d.warranty]+(d.warranty==='shop'?' ('+d.wMonths+' شهر)':''),network:NET_T[d.network],icloud:true,nego:!!d.nego,date:'نوفمبر 2026',
   form:Object.assign({},d,{acc:d.acc.slice()}),pubPhotos:Object.assign({},PUB.photos),shots:Object.assign({},PUB.shots)};
  DB.listings.unshift(l);save();PUBDONE={l,again:!!d.again};PUB=null;

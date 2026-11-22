@@ -22,10 +22,12 @@
     audit:      { table: 'dorly_audit',      order: 'prepend' }
   };
   const PRIVATE_KEYS = ['address', 'crNo', 'taxNo', 'owner', 'whatsapp']; // seller profile fields never shown publicly (whatsapp: members only)
+  const LISTING_PRIVATE = ['imei', 'whatsapp'];   // listing form fields kept in dorly_listing_private (owner + admin)
   const LOGIN_DOMAIN = '@phone.dorly.app';
 
   let snap = {};                 // coll -> Map(id -> serialized json)
   let privSnap = new Map();      // seller id -> serialized private json
+  let lPrivSnap = new Map();     // listing id -> serialized private json
   let userSnap = new Map();      // profile id -> disabled flag
   const pathOf = new Map();      // displayed image src (signed URL / data URL) -> 'sbp:<path>'
   let session = null, profile = null;
@@ -58,8 +60,13 @@
       PRIVATE_KEYS.forEach(k => delete o.profile[k]);
     }
     if (coll === 'listings' && o.shots) for (const k in o.shots) { const p = pathOf.get(o.shots[k]); if (p) o.shots[k] = p; }
+    if (coll === 'listings' && o.form) {
+      if ('whatsapp' in o.form) o.wa = !!o.form.whatsapp;          // public flag only
+      LISTING_PRIVATE.forEach(k => delete o.form[k]);
+    }
     return o;
   }
+  const lPrivOf = l => { const f = l.form || {}, o = {}; LISTING_PRIVATE.forEach(k => { if (f[k] != null && f[k] !== '') o[k] = f[k]; }); return o; };
   const privOf = s => { const p = s.profile || {}, o = {}; PRIVATE_KEYS.forEach(k => { if (p[k] != null && p[k] !== '') o[k] = p[k]; }); return o; };
 
   /* ---------- photos -> Supabase Storage ---------- */
@@ -129,7 +136,7 @@
       DB[c] = rows.map(r => Object.assign({}, r.data, { id: r.id }));
       snap[c] = new Map(DB[c].map(o => [o.id, JSON.stringify(serialize(c, o))]));
     });
-    privSnap = new Map();
+    privSnap = new Map(); lPrivSnap = new Map();
     if (session) {
       const { data: priv } = await sb.from('dorly_seller_private').select('*');
       (priv || []).forEach(p => {
@@ -140,13 +147,20 @@
       const { data: users } = await sb.from('dorly_profiles').select('*').order('created_at');
       DB.users = (users || []).map(u => ({ id: u.id, role: u.role, name: u.name, phone: u.phone, email: u.email, sellerId: u.seller_id || undefined, created: u.created, disabled: u.disabled }));
       await signShots(DB.listings);
+      lPrivSnap = new Map();
+      const { data: lpriv } = await sb.from('dorly_listing_private').select('*');
+      (lpriv || []).forEach(p => {
+        const l = DB.listings.find(x => x.id === p.listing_id);
+        if (l) { l.form = Object.assign({}, l.form || {}, p.data); lPrivSnap.set(l.id, JSON.stringify(lPrivOf(l))); }
+      });
+      snap.listings = new Map(DB.listings.map(o => [o.id, JSON.stringify(serialize('listings', o))]));
     }
     userSnap = new Map(DB.users.map(u => [u.id, !!u.disabled]));
     return DB;
   }
 
   // copy server-side values back onto the in-memory object (media and private profile fields stay as they are)
-  const KEEP_LOCAL = ['pubPhotos', 'shots', 'photos', 'profile'];
+  const KEEP_LOCAL = ['pubPhotos', 'shots', 'photos', 'profile', 'form'];   // these hold private/media fields the server copy lacks
   function adoptServer(live, data) {
     if (!data) return;
     for (const k in data) if (!KEEP_LOCAL.includes(k) && JSON.stringify(live[k]) !== JSON.stringify(data[k])) live[k] = data[k];
@@ -176,6 +190,15 @@
             if (r.error) throw r.error;
             prev.set(live.id, JSON.stringify(serialize(c, live)));
           } catch (e) { errs.push(c + ':' + (e.message || e)); }
+        }
+        if (c === 'listings' && session && prev.has(live.id)) {   // private listing fields (after the listing exists)
+          const p = JSON.stringify(lPrivOf(live));
+          if ((lPrivSnap.get(live.id) || '{}') !== p && (lPrivSnap.has(live.id) || p !== '{}')) {
+            const r = lPrivSnap.has(live.id)
+              ? await sb.from('dorly_listing_private').update({ data: JSON.parse(p) }).eq('listing_id', live.id).select('listing_id')
+              : await sb.from('dorly_listing_private').insert({ listing_id: live.id, data: JSON.parse(p) });
+            if (r.error || (lPrivSnap.has(live.id) && !(r.data || []).length)) errs.push('listing_private'); else lPrivSnap.set(live.id, p);
+          }
         }
         if (c === 'sellers' && session) {          // private seller fields
           const p = JSON.stringify(privOf(live));
@@ -241,6 +264,11 @@
     const { data } = await sb.rpc('dorly_taken', { p_phone: phone, p_email: email || '' });
     return data || null;
   }
+  // WhatsApp number to contact about a listing (listing's own, else the seller's), members only
+  async function listingWhatsapp(lid) {
+    const { data } = await sb.rpc('dorly_listing_whatsapp', { lid });
+    return data || null;
+  }
   // a seller's WhatsApp number, only for signed-in members
   async function sellerWhatsapp(sid) {
     const { data } = await sb.rpc('dorly_seller_whatsapp', { sid });
@@ -258,6 +286,6 @@
     return data || {};
   }
 
-  const Cloud = { sb, load, sync, reload, user, signIn, signUp, signOut, taken, otp, sellerWhatsapp, onReload: null, disabledNotice: false };
+  const Cloud = { sb, load, sync, reload, user, signIn, signUp, signOut, taken, otp, sellerWhatsapp, listingWhatsapp, onReload: null, disabledNotice: false };
   window.Cloud = Cloud;
 })();
