@@ -539,7 +539,8 @@ function viewAdmLogin(msg){
 }
 async function admLogin(ev){
  ev.preventDefault();if(ADM.fails>=5){$('#aerr').textContent='حاولت كتير. استنى دقيقة وجرّب تاني.';return}
- const id=$('#a_id').value.trim(),ph=toEn(id).replace(/[\s\-()]/g,''),r=await Cloud.signIn(id,$('#a_pw').value,/^01[0125]\d{8}$/.test(ph)?ph:null);
+ const id=$('#a_id').value.trim();let ph=toEn(id).replace(/[\s\-()]/g,'');if(ph.startsWith('+20'))ph='0'+ph.slice(3);else if(ph.startsWith('0020'))ph='0'+ph.slice(4);else if(/^20\d{10}$/.test(ph))ph='0'+ph.slice(2);
+ const r=await Cloud.signIn(id,$('#a_pw').value,/^01[0125]\d{8}$/.test(ph)?ph:null);
  if(r.error){ADM.fails++;setTimeout(()=>{ADM.fails=0},60000);$('#aerr').textContent=r.error==='disabled'?'الحساب ده موقوف.':'البيانات مش مظبوطة.';return}
  DB=r.db;USER=Cloud.user();
  if(!isAdm()){await Cloud.signOut();USER=null;DB=await Cloud.load();viewAdmLogin('الحساب ده مش حساب أدمن.');return}
