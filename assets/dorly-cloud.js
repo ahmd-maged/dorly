@@ -21,7 +21,7 @@
     verifs:     { table: 'dorly_verifs',     order: 'append'  },
     audit:      { table: 'dorly_audit',      order: 'prepend' }
   };
-  const PRIVATE_KEYS = ['address', 'crNo', 'taxNo', 'owner']; // seller profile fields never shown publicly
+  const PRIVATE_KEYS = ['address', 'crNo', 'taxNo', 'owner', 'whatsapp']; // seller profile fields never shown publicly (whatsapp: members only)
   const LOGIN_DOMAIN = '@phone.dorly.app';
 
   let snap = {};                 // coll -> Map(id -> serialized json)
@@ -53,7 +53,10 @@
   /* ---------- serialization (what is stored in the `data` column) ---------- */
   function serialize(coll, obj) {
     const o = clone(obj);
-    if (coll === 'sellers' && o.profile) PRIVATE_KEYS.forEach(k => delete o.profile[k]);
+    if (coll === 'sellers' && o.profile) {
+      if ('whatsapp' in o.profile) o.profile.wa = !!o.profile.whatsapp;   // public flag only
+      PRIVATE_KEYS.forEach(k => delete o.profile[k]);
+    }
     if (coll === 'listings' && o.shots) for (const k in o.shots) { const p = pathOf.get(o.shots[k]); if (p) o.shots[k] = p; }
     return o;
   }
@@ -133,12 +136,20 @@
         const s = DB.sellers.find(x => x.id === p.seller_id);
         if (s) { s.profile = Object.assign({}, s.profile || {}, p.data); privSnap.set(s.id, JSON.stringify(privOf(s))); }
       });
+      snap.sellers = new Map(DB.sellers.map(o => [o.id, JSON.stringify(serialize('sellers', o))]));
       const { data: users } = await sb.from('dorly_profiles').select('*').order('created_at');
       DB.users = (users || []).map(u => ({ id: u.id, role: u.role, name: u.name, phone: u.phone, email: u.email, sellerId: u.seller_id || undefined, created: u.created, disabled: u.disabled }));
       await signShots(DB.listings);
     }
     userSnap = new Map(DB.users.map(u => [u.id, !!u.disabled]));
     return DB;
+  }
+
+  // copy server-side values back onto the in-memory object (media and private profile fields stay as they are)
+  const KEEP_LOCAL = ['pubPhotos', 'shots', 'photos', 'profile'];
+  function adoptServer(live, data) {
+    if (!data) return;
+    for (const k in data) if (!KEEP_LOCAL.includes(k) && JSON.stringify(live[k]) !== JSON.stringify(data[k])) live[k] = data[k];
   }
 
   /* ---------- write back only what changed ---------- */
@@ -157,11 +168,13 @@
             if (c === 'listings' || c === 'verifs') row.status = out.status;
             let r;
             if (prev.has(live.id)) {
-              r = await sb.from(T[c].table).update(row).eq('id', live.id).select('id');
+              r = await sb.from(T[c].table).update(row).eq('id', live.id).select('id, data');
               if (!r.error && !(r.data || []).length) r.error = { message: 'not allowed' };
+              // the database may override protected fields (payment, level, badges...): show what it stored
+              if (!r.error) adoptServer(live, r.data[0].data);
             } else r = await sb.from(T[c].table).insert(row);
             if (r.error) throw r.error;
-            prev.set(live.id, js);
+            prev.set(live.id, JSON.stringify(serialize(c, live)));
           } catch (e) { errs.push(c + ':' + (e.message || e)); }
         }
         if (c === 'sellers' && session) {          // private seller fields
@@ -198,7 +211,7 @@
   /* ---------- auth ---------- */
   function user() {
     if (!profile) return null;
-    return { uid: profile.id, name: profile.name, role: profile.role, sellerId: profile.seller_id || undefined };
+    return { uid: profile.id, name: profile.name, role: profile.role, phone: profile.phone, email: profile.email, sellerId: profile.seller_id || undefined };
   }
   async function signIn(ident, password, phoneNorm) {
     let email = phoneNorm ? loginFor(phoneNorm) : null;
@@ -228,6 +241,11 @@
     const { data } = await sb.rpc('dorly_taken', { p_phone: phone, p_email: email || '' });
     return data || null;
   }
+  // a seller's WhatsApp number, only for signed-in members
+  async function sellerWhatsapp(sid) {
+    const { data } = await sb.rpc('dorly_seller_whatsapp', { sid });
+    return data || null;
+  }
   async function signOut() { await sb.auth.signOut(); session = null; profile = null; }
   // SMS codes (Twilio Verify, through the dorly-otp Edge Function)
   async function otp(body) {
@@ -240,6 +258,6 @@
     return data || {};
   }
 
-  const Cloud = { sb, load, sync, reload, user, signIn, signUp, signOut, taken, otp, onReload: null, disabledNotice: false };
+  const Cloud = { sb, load, sync, reload, user, signIn, signUp, signOut, taken, otp, sellerWhatsapp, onReload: null, disabledNotice: false };
   window.Cloud = Cloud;
 })();

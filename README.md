@@ -32,6 +32,17 @@ update dorly_profiles set role = 'admin' where phone = '01XXXXXXXXX';
 
 Sign-up creates the account right away, with no SMS or e-mail code. The `dorly-otp` Edge Function, which e-mails codes through Brevo's free plan, is ready for later. To turn verification back on: set `BREVO_API_KEY` and `DORLY_MAIL_FROM` in Supabase **Edge Functions → Secrets**, add the `otp` step back to `RSTEPS` in `dorly.html`, and require the token again in `dorly-signup`. Git history has that version (commit "Verify accounts by e-mail code").
 
+### Listing fee (99 EGP) and payments
+
+- Every new listing starts as `pay.status = "unpaid"`. The database won't let a listing go live until it's `paid`, and only admins (or the service role) can mark it paid.
+- **Online payment isn't connected yet.** The seller sees a "ادفع 99 جنيه" button that calls `startPayment(id)` in `dorly.html`, which is the single place to plug in Fawry later. Until then, admins confirm payments manually from the admin review tab ("تأكيد استلام الدفع").
+- To connect Fawry: create the charge in `startPayment`, and add an Edge Function webhook that verifies Fawry's signature and then sets `data.pay.status = 'paid'` with the service role.
+- Resubmitting a rejected listing keeps its payment.
+
+### Contacting sellers needs an account
+
+Inquiries and WhatsApp contact require a signed-in, active account, and the database enforces both. Sellers' WhatsApp numbers are stored privately. Members get a number through `dorly_seller_whatsapp()` only when they click to chat.
+
 ### Known limits
 
 - Phone numbers and e-mails are not verified, and password reset goes through the team.

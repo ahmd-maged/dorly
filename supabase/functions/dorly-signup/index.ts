@@ -23,8 +23,8 @@ function normPhone(s: string) {
 const okPhone = (s: string) => /^01[0125]\d{8}$/.test(s);
 const okMail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
 const str = (v: unknown, max = 300) => String(v ?? "").trim().slice(0, max);
-const PUBLIC_KEYS = ["bio", "hours", "whatsapp", "activity", "branches", "web", "gov", "area"];
-const PRIVATE_KEYS = ["address", "crNo", "taxNo", "owner"];
+const PUBLIC_KEYS = ["bio", "hours", "activity", "branches", "web", "gov", "area"];
+const PRIVATE_KEYS = ["address", "crNo", "taxNo", "owner", "whatsapp"];  // whatsapp: members only (dorly_seller_whatsapp)
 const DOC_KINDS = ["merchant", "identity"];
 
 Deno.serve(async (req) => {
@@ -59,12 +59,13 @@ Deno.serve(async (req) => {
       const s = b.seller || {};
       const p = s.profile || {};
       sellerId = "S" + Date.now() + Math.random().toString(36).slice(2, 6);
-      const pub: Record<string, string> = {};
+      const pub: Record<string, string | boolean> = {};
       for (const k of PUBLIC_KEYS) pub[k] = str(p[k]);
-      if (pub.whatsapp) pub.whatsapp = okPhone(normPhone(pub.whatsapp)) ? normPhone(pub.whatsapp) : "";
-      if (pub.web && !/^https?:\/\//i.test(pub.web)) pub.web = "";
+      if (pub.web && !/^https?:\/\//i.test(pub.web as string)) pub.web = "";
       const priv: Record<string, string> = {};
       for (const k of PRIVATE_KEYS) priv[k] = str(p[k]);
+      priv.whatsapp = okPhone(normPhone(priv.whatsapp)) ? normPhone(priv.whatsapp) : "";
+      pub.wa = !!priv.whatsapp;  // public flag only, the number itself stays private
       const sName = str(s.name, 80) || name;
       const city = (pub.area ? pub.area + " – " : "") + pub.gov;
       const seller = { id: sellerId, name: sName, type: role, city, badges: [], since: String(new Date().getFullYear()), profile: pub };
