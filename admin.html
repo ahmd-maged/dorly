@@ -438,7 +438,7 @@ function admOverview(){
  <div class="card" style="padding:16px 18px"><h3 style="margin-bottom:10px">محتاج تدخل</h3>${todo.map(t=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--bd)"><span>${t[1]}</span><span><b>${t[2]}</b> <button class="btn ghost sm" onclick="admTab('${t[0]}')">افتح</button></span></div>`).join('')}</div>
  <div class="card" style="padding:16px 18px"><h3 style="margin-bottom:10px">المنشور حسب الجيل</h3>${Object.keys(gens).sort((a,b)=>a-b).map(g=>`<div style="display:flex;align-items:center;gap:8px;margin:6px 0"><span style="width:88px;white-space:nowrap">iPhone ${g}</span><div style="flex:1;background:var(--bd);border-radius:6px;height:12px"><i style="display:block;height:12px;border-radius:6px;background:var(--p);width:${gens[g]/mx*100}%"></i></div><b>${gens[g]}</b></div>`).join('')||'<span class="mut">لا يوجد.</span>'}</div>
  <div class="card" style="padding:16px 18px"><h3 style="margin-bottom:10px">آخر النشاط</h3>${ev.map(e=>`<div style="padding:6px 0;border-bottom:1px dashed var(--bd);font-size:14px">${e.x}${e.t?`<div class="mut" style="font-size:12px">${fdt(e.t)}</div>`:''}</div>`).join('')||'<span class="mut">لسه مفيش نشاط مسجّل.</span>'}</div></div>
- <p class="mut" style="margin-top:12px;font-size:13px">ملحوظة: مفيش تتبّع زيارات أو محادثات في النسخة دي — الأرقام فوق من بيانات المنصة نفسها بس.</p>`;
+ <p class="mut" style="margin-top:12px;font-size:13px">ملحوظة: مفيش تتبّع زيارات أو محادثات — الأرقام فوق من بيانات المنصة نفسها بس.</p>`;
 }
 
 function admRows(){

@@ -42,6 +42,7 @@ a{color:inherit;text-decoration:none}
 .btn.danger{background:#fff;border-color:#fecaca;color:var(--red)}
 .btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
 /* demo bar */
+#demo-bar:empty{display:none}
 #demo-bar{background:var(--warnl);color:var(--warn);font-size:13px;text-align:center;padding:6px 12px}
 #demo-bar button{text-decoration:underline;font-weight:600;margin-inline-start:8px}
 /* header */
@@ -253,7 +254,7 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
 <div id="demo-bar"></div>
 <header id="hdr"></header>
 <main id="app"></main>
-<footer><div class="wrap"><div><b style="color:var(--tx)">دورلي</b> — نسخة تجريبية. الأجهزة والأسعار والبائعين المعروضين بيانات عينة لغرض العرض فقط.</div><div>التحقق بيغطي بس اللي مكتوب قدامه — مفيش ضمان لأصالة الجهاز أو خلوّه من البلاغات إلا بفحص معتمد.</div></div></footer>
+<footer><div class="wrap"><div><b style="color:var(--tx)">دورلي</b> — مساعدك لشراء وبيع وتبديل الآيفون.</div><div>التحقق بيغطي بس اللي مكتوب قدامه — مفيش ضمان لأصالة الجهاز أو خلوّه من البلاغات إلا بفحص معتمد.</div></div></footer>
 <div id="modal" onclick="if(event.target===this)closeModal()"></div>
 <div id="toast"></div>
 
@@ -367,7 +368,7 @@ function seed(){
 function seedVerifs(){const mk=(id,sl,k,st,docs)=>({id,seller:sl,kind:k,docs:docs.map(x=>({label:x,name:'—'})),status:st,reason:'',time:'نوفمبر 2026',sample:true});const M=['السجل التجاري','البطاقة الضريبية','صورة المحل'];return [mk('V1','m1','merchant','approved',M),mk('V2','m2','merchant','approved',M),mk('V3','m3','merchant','pending',M),mk('V4','i1','identity','approved',['البطاقة (وش)','البطاقة (ضهر)','سيلفي']),mk('V5','i2','identity','pending',['البطاقة (وش)','البطاقة (ضهر)','سيلفي بالبطاقة'])]}
 /* Data now lives in Supabase (assets/dorly-cloud.js). seed() above is only kept as the source of the sample rows. */
 let DB={sellers:[],listings:[],inquiries:[],complaints:[],verifs:[],users:[],audit:[]};
-let DEMO=LS.get('dorly_demo',true);
+let DEMO=false; /* sample listings are hidden on the public site */
 let USER=null;
 const save=()=>Cloud.sync(DB);
 Cloud.onReload=db=>{DB=db;setSession();NOSCROLL=true;route()};
@@ -661,7 +662,7 @@ async function finishBuy(){
  if(tk!==S.token)return;
  S.acts=[];
  if(!res.length){
-  if(!await say(DEMO?'للأسف ملقيتش أجهزة قريبة من طلبك دلوقتي 😕 جرّب تغيّر الموديل أو الميزانية.':'مفيش عروض متاحة دلوقتي (الوضع التجريبي مقفول، فمفيش بيانات عينة). ممكن تبدأ من جديد بعدين.'))return;
+  if(!await say(DEMO?'للأسف ملقيتش أجهزة قريبة من طلبك دلوقتي 😕 جرّب تغيّر الموديل أو الميزانية.':'مفيش عروض متاحة دلوقتي. ممكن تبدأ من جديد بعدين.'))return;
   S.acts=[{l:'عدّل الميزانية',f:()=>editStep('budget')},{l:'ابدأ من جديد',f:restart}];S.pending='done';renderChat();return;
  }
  const top=res.slice(0,3),n=res.length;
@@ -834,7 +835,7 @@ function toggleCmp(id,el){
 function viewResults(){
  const list=filtered(),o=(v,l,cur)=>`<option value="${v}" ${String(cur)===String(v)?'selected':''}>${l}</option>`;
  const sh=R.gen&&R.storage&&DB.listings.some(l=>pub(l)&&l.gen==R.gen&&l.variant===''&&l.storage===R.storage)?pcmp(+R.gen,'',R.storage,null):'';
- $('#app').innerHTML=`<div class="wrap page"><h1>تصفح الأجهزة</h1><p class="mut">${list.length} عرض ${DEMO?'(بيانات عينة للتجربة)':''}</p>
+ $('#app').innerHTML=`<div class="wrap page"><h1>تصفح الأجهزة</h1><p class="mut">${list.length} عرض </p>
  <div class="filters">
   <label>الموديل<select onchange="setR('gen',this.value)">${o('','الكل',R.gen)}${MODELS.map(g=>o(g,'iPhone '+g,R.gen)).join('')}</select></label>
   <label>السعة<select onchange="setR('storage',this.value)">${o('','الكل',R.storage)}${STORAGES.map(s=>o(s,s,R.storage)).join('')}</select></label>
@@ -845,7 +846,7 @@ function viewResults(){
   <label class="chk"><input type="checkbox" ${R.verified?'checked':''} onchange="setR('verified',this.checked)"> بائعين موثّقين بس</label>
   <button class="btn ghost sm" style="margin-top:16px" onclick="resetR()">مسح الفلاتر</button></div>
  ${sh}
- ${list.length?`<div class="grid">${list.map(l=>card(l,{cmp:true})).join('')}</div>`:`<div class="card empty"><div class="ico-b">${I('search',24)}</div><h3>مفيش عروض مطابقة</h3><p>${DEMO?'جرّب تغيّر الفلاتر.':'الوضع التجريبي مقفول ومفيش إعلانات حقيقية دلوقتي.'}</p></div>`}
+ ${list.length?`<div class="grid">${list.map(l=>card(l,{cmp:true})).join('')}</div>`:`<div class="card empty"><div class="ico-b">${I('search',24)}</div><h3>مفيش عروض مطابقة</h3><p>${DEMO?'جرّب تغيّر الفلاتر.':'مفيش إعلانات متاحة دلوقتي.'}</p></div>`}
  </div>${S.cmp.length?`<div class="cmpbar"><span>${S.cmp.length} للمقارنة</span><button class="btn primary sm" onclick="go('#/compare')" ${S.cmp.length<2?'disabled':''}>قارن دلوقتي</button><button class="icbtn" style="color:#fff" onclick="S.cmp=[];NOSCROLL=true;route()">${I('x',16)}</button></div>`:''}`;
 }
 function viewCompare(){
@@ -892,7 +893,7 @@ function viewSeller(id){
  <h3 style="margin-bottom:12px">${s.type==='merchant'?'مخزون التاجر':'الجهاز المعروض'}</h3>
  ${ls.length?`<div class="grid">${ls.map(l=>card(l)).join('')}</div>`:'<div class="card empty">مفيش أجهزة معروضة دلوقتي.</div>'}</div>`;
 }
-function gate(t,m){$('#app').innerHTML=`<div class="wrap page"><div class="card empty"><div class="ico-b">${I('lock',24)}</div><h3>${t}</h3><p>${m}</p><br><button class="btn primary" onclick="openLogin({})">دخول / تسجيل (تجريبي)</button></div></div>`}
+function gate(t,m){$('#app').innerHTML=`<div class="wrap page"><div class="card empty"><div class="ico-b">${I('lock',24)}</div><h3>${t}</h3><p>${m}</p><br><button class="btn primary" onclick="openLogin({})">دخول / تسجيل</button></div></div>`}
 function dashPrice(id,v){const l=byId(id);v=+v;if(!(v>0)){toast('اكتب سعر صحيح');route();return}l.price=v;save();toast('اتحدّث السعر')}
 function dashStatus(id,v){byId(id).status=v;save();toast('اتحدّثت الحالة');route()}
 function dashDel(id){if(!confirm('تحذف الإعلان ده؟'))return;DB.listings=DB.listings.filter(l=>l.id!==id);save();route()}
@@ -902,7 +903,7 @@ function viewAbout(){
  <div class="grid3"><div class="card svc" style="cursor:default"><div class="ico-b">${I('bot',24)}</div><h3>مساعد مش بيخترع</h3><p class="mut">المساعد بيرشّح من الإعلانات الموجودة فعلاً. مش بيألّف أجهزة أو أسعار أو نتايج تحقق.</p></div>
  <div class="card svc" style="cursor:default"><div class="ico-b">${I('shield',24)}</div><h3>تحقق بمستويات</h3><p class="mut">أربع مستويات واضحة، وكل جهاز بيقولك اتراجع إيه ومتى.</p></div>
  <div class="card svc" style="cursor:default"><div class="ico-b">${I('lock',24)}</div><h3>خصوصيتك</h3><p class="mut">الأرقام التسلسلية ووثائق الهوية مش بتتعرض علناً.</p></div></div>
- <div class="callout" style="margin-top:22px">دي نسخة تجريبية: كل الأجهزة والأسعار والبائعين بيانات عينة. اشتراك التاجر المدفوع مش بيعتبر دليل على الثقة.</div></div>`;
+ <div class="callout" style="margin-top:22px">اشتراك التاجر المدفوع مش بيعتبر دليل على الثقة.</div></div>`;
 }
 
 /* =========================================================
@@ -1002,7 +1003,7 @@ function authReset(){
  if(!RST)RST={step:0};
  const back=`<button type="button" class="lnk" onclick="RST=null;go('#/auth/login')">رجوع لتسجيل الدخول</button>`;
  return `<h2>نسيت كلمة السر؟</h2><p class="mut" style="margin-bottom:14px">استرجاع كلمة السر بكود SMS لسه مش متفعّل. كلّم فريق دورلي وهنساعدك ترجع لحسابك بعد ما نتأكد إنه بتاعك.</p>${back}`;
- if(RST.step===1)return `<h2>اكتب كود التأكيد</h2><p class="mut">لو الرقم مسجّل هيوصله كود من 6 أرقام.</p><div class="callout">نسخة تجريبية: مفيش SMS حقيقي، الكود هو <b dir="ltr" style="font-size:18px">${RST.code}</b></div><form class="form" onsubmit="resetVerify(event)"><label>الكود<input id="r_otp" inputmode="numeric" maxlength="6" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button><div style="display:flex;gap:10px;align-items:center"><button type="button" class="btn ghost sm" id="rs" onclick="resetSend()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span></div></form>`;
+ if(RST.step===1)return `<h2>اكتب كود التأكيد</h2><p class="mut">لو الرقم مسجّل هيوصله كود من 6 أرقام.</p><div class="callout">كود التأكيد: <b dir="ltr" style="font-size:18px">${RST.code}</b></div><form class="form" onsubmit="resetVerify(event)"><label>الكود<input id="r_otp" inputmode="numeric" maxlength="6" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button><div style="display:flex;gap:10px;align-items:center"><button type="button" class="btn ghost sm" id="rs" onclick="resetSend()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span></div></form>`;
  return `<h2>كلمة سر جديدة</h2><form class="form" onsubmit="resetSave(event)"><label>كلمة السر الجديدة<div style="position:relative"><input id="r_pw" type="password" autocomplete="new-password" style="padding-inline-end:64px"><button type="button" class="pwt" onclick="togglePw('r_pw',this)">إظهار</button></div><span class="mut" style="font-size:12px;font-weight:400">8 حروف على الأقل، فيها حروف وأرقام.</span></label><label>تأكيد كلمة السر<input id="r_pw2" type="password" autocomplete="new-password"></label><div id="rerr"></div><button class="btn primary">حفظ</button></form>`;
 }
 function resetSend(ev){
@@ -1063,7 +1064,7 @@ function regStepHtml(st){
   <div class="form">${fld('name',r==='merchant'?'اسم صاحب النشاط بالكامل':'اسمك بالكامل',{req:1,ac:'name',hint:'بيستخدم في التحقق فقط، مش بيتعرض علناً.'})}${fld('phone','رقم الموبايل',{req:1,type:'tel',ac:'tel',attr:'dir="ltr" style="text-align:start" inputmode="tel"',ph:'01012345678'})}${fld('email','الإيميل (اختياري)',{type:'email',ac:'email',attr:'dir="ltr" style="text-align:start"'})}
   <div class="two">${pwf('password','كلمة السر','8 حروف على الأقل، فيها حروف وأرقام.')}${pwf('password2','تأكيد كلمة السر')}</div>
   <label class="chkl"><input type="checkbox" ${d.terms?'checked':''} onchange="REG.d.terms=this.checked"> <span>موافق على شروط الاستخدام وسياسة الخصوصية، وإن بياناتي ومستنداتي بتتستخدم للتحقق بس.</span></label></div>${regNav(st,{next:'التالي: تأكيد الموبايل'})}`;
- case 'otp':return `<h2>أكّد رقم موبايلك</h2><p class="mut">بعتنالك كود من 6 أرقام على <b dir="ltr">${esc(normPhone(d.phone))}</b>.</p><div class="callout">نسخة تجريبية: مفيش SMS حقيقي، الكود هو <b dir="ltr" style="font-size:18px">${REG.otp.code}</b></div>
+ case 'otp':return `<h2>أكّد رقم موبايلك</h2><p class="mut">بعتنالك كود من 6 أرقام على <b dir="ltr">${esc(normPhone(d.phone))}</b>.</p><div class="callout">كود التأكيد: <b dir="ltr" style="font-size:18px">${REG.otp.code}</b></div>
   <form class="form" onsubmit="otpVerify(event)"><label>كود التأكيد<input id="f_otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button></form>
   <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn ghost sm" id="rs" onclick="resendOtp()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span><button class="btn ghost sm" onclick="regBack()">تغيير الرقم</button></div>`;
  case 'identity':return `<h2>إثبات هويتك <span class="tag">اختياري دلوقتي</span></h2><p class="mut" style="margin-bottom:10px">عشان تاخد شارة «هوية البائع متحققة» ويثق فيك المشتري أسرع. مش بنسأل عن رقم البطاقة.</p><div class="callout" style="margin:0 0 12px">${I('lock',14)} صور البطاقة بيشوفها فريق التحقق بس، ومش بتتعرض للمشترين ولا بتتنشر أبداً. الشارة بتتمنح بعد المراجعة.</div>
@@ -1352,7 +1353,7 @@ function pubStepHtml(st){
   ${psel('network','حالة الشبكة',Object.entries(NET_T),{req:1})}
   ${pchk('icloud','أؤكد إن الجهاز <b>مسجّل خروج من iCloud</b> وخاصية <b>Find My</b> مقفولة، وجاهز يتفعّل على حساب المشتري. <span class="rq">*</span>')}
   ${pfld('imei','رقم IMEI (اختياري)',{attr:'inputmode="numeric" maxlength="15" dir="ltr" style="text-align:start"',hint:`${I('lock',12)} للمراجعة الداخلية بس — بيتخزّن خاص ومش بيتعرض لأي حد.`})}</div>${pubNav()}`;
- if(st==='photos')return `<h2>صور الجهاز</h2><p class="mut" style="margin-bottom:10px">الصور دي هتظهر للمشترين.</p><div class="callout" style="margin:0 0 12px">صوّر الجهاز الحقيقي بنفسك: إضاءة كويسة، من غير فلاتر، والجهاز كله باين. صور من النت أو لجهاز تاني بتتعمل لها رفض. الصور بتتصغّر تلقائياً وبتتحفظ على جهازك في النسخة التجريبية.</div>
+ if(st==='photos')return `<h2>صور الجهاز</h2><p class="mut" style="margin-bottom:10px">الصور دي هتظهر للمشترين.</p><div class="callout" style="margin:0 0 12px">صوّر الجهاز الحقيقي بنفسك: إضاءة كويسة، من غير فلاتر، والجهاز كله باين. صور من النت أو لجهاز تاني بتتعمل لها رفض. الصور بتتصغّر تلقائياً قبل الرفع.</div>
   <div class="slots">${PHOTO_SLOTS.map(s=>slotCard('photos',s)).join('')}</div>${pubNav()}`;
  if(st==='shots')return `<h2>لقطات إعدادات الجهاز</h2><p class="mut" style="margin-bottom:10px">اللقطات دي بتثبت إن البيانات اللي كتبتها حقيقية.</p><div class="callout" style="margin:0 0 12px">${I('lock',14)} <b>خاصة:</b> لقطات الإعدادات بيشوفها فريق المراجعة بس، ومش بتظهر للمشترين. بعد مطابقتها بالبيانات المكتوبة، الإعلان بياخد مستوى «البيانات متراجعة». ده مش اختبار أو فحص فني للجهاز.</div>
   <div class="slots">${SHOT_SLOTS.map(s=>slotCard('shots',s)).join('')}</div>
@@ -1416,7 +1417,7 @@ function renderHeader(){
  $('#hdr').innerHTML=`<div class="hdr-in"><a class="logo" href="#/"><span class="logo-mark">${I('search',20)}</span><span>دورلي</span></a>
  <nav class="nav ${MENU?'open':''}">${L.map(l=>`<a href="${l[0]}" class="${key===l[2]?'on':''}" onclick="MENU=false">${l[1]}</a>`).join('')}</nav>
  <div class="hdr-act">${USER?`${dash}<div class="userchip"><span class="nm">${esc(USER.name)}</span><span class="avatar-s">${esc(USER.name[0])}</span></div><button class="icbtn" title="خروج" onclick="logout()">${I('x',16)}</button>`:`<button class="btn primary sm" onclick="openLogin({})">${I('user',15)} دخول / تسجيل</button>`}<button class="burger" onclick="toggleMenu()" aria-label="القائمة">${I('menu')}</button></div></div>`;
- $('#demo-bar').innerHTML=DEMO?`وضع تجريبي: كل الأجهزة والأسعار والبائعين بيانات عينة لأغراض العرض فقط.<button onclick="setDemo(false)">إيقاف الوضع التجريبي</button>`:`الوضع التجريبي مقفول — بتظهر بس الإعلانات اللي اتضافت فعلياً.<button onclick="setDemo(true)">تشغيل الوضع التجريبي</button>`;
+ $('#demo-bar').innerHTML='';
 }
 function setDemo(v){DEMO=v;LS.set('dorly_demo',v);route()}
 function route(){
