@@ -1,7 +1,9 @@
 // Dorly sign-up: creates the auth user, profile and (for sellers) the seller record with the service role,
 // so browsers can never pick their own role, badges or another user's data.
-// Deployed with verify_jwt = false (anonymous visitors sign up); all input is validated here.
+// Deployed with verify_jwt = false (anonymous visitors sign up); all input is validated here,
+// and the phone number must carry a signed proof of SMS verification from dorly-otp.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { readToken } from "./token.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -40,6 +42,9 @@ Deno.serve(async (req) => {
   if (!["customer", "individual", "merchant"].includes(role)) return json({ error: "role" }, 400);
   if (name.split(/\s+/).length < 2) return json({ error: "name" }, 400);
   if (!okPhone(phone)) return json({ error: "phone" }, 400);
+  // the phone must have been verified by SMS (dorly-otp) within the last 30 minutes
+  const otp = await readToken(String(b.otpToken || ""));
+  if (!otp || otp.phone !== phone || otp.purpose !== "signup") return json({ error: "otp" }, 400);
   if (email && !okMail(email)) return json({ error: "email" }, 400);
   if (password.length < 8 || password.length > 72 || !/\d/.test(password) || !/[A-Za-z؀-ۿ]/.test(password)) return json({ error: "password" }, 400);
 

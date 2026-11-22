@@ -229,7 +229,17 @@
     return data || null;
   }
   async function signOut() { await sb.auth.signOut(); session = null; profile = null; }
+  // SMS codes (Twilio Verify, through the dorly-otp Edge Function)
+  async function otp(body) {
+    const { data, error } = await sb.functions.invoke('dorly-otp', { body });
+    if (error) {
+      let code = 'failed';
+      try { code = (await error.context.json()).error || code; } catch (e) { }
+      return { error: code };
+    }
+    return data || {};
+  }
 
-  const Cloud = { sb, load, sync, reload, user, signIn, signUp, signOut, taken, onReload: null, disabledNotice: false };
+  const Cloud = { sb, load, sync, reload, user, signIn, signUp, signOut, taken, otp, onReload: null, disabledNotice: false };
   window.Cloud = Cloud;
 })();

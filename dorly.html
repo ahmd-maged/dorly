@@ -947,6 +947,7 @@ function waBuyer(qid){const q=DB.inquiries.find(x=>x.id===qid),n=q&&waNum(q.phon
  if(q.status==='new'){q.status='read';save()}
  window.open(waUrl(n,`أهلاً ${q.name}، معاك ${s?s.name:''} من دورلي بخصوص استفسارك عن ${l?nm(l)+' '+l.storage:'الجهاز'}.`),'_blank','noopener');route()}
 const okMail=s=>/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
+const otpMsg=c=>({sms_not_configured:'خدمة الرسايل مش متاحة دلوقتي. جرّب كمان شوية.',too_many:'طلبت أكواد كتير. استنى 10 دقايق وجرّب تاني.',send_failed:'ماقدرناش نبعت رسالة للرقم ده. اتأكد من الرقم وجرّب تاني.',wrong_code:'الكود غلط. اتأكد منه وجرّب تاني.',expired:'الكود انتهى أو اتجرّب كتير. اطلب كود جديد.',code:'اكتب الكود اللي وصلك في الرسالة.',taken_phone:'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول',phone:'اكتب رقم موبايل مصري صحيح'})[c]||'حصلت مشكلة. جرّب تاني.';
 const genOtp=()=>String(Math.floor(100000+Math.random()*900000));
 const autoDisplay=n=>{const p=String(n||'').trim().split(/\s+/);return p.length>1?p[0]+' '+p[p.length-1][0]+'.':p[0]||''};
 async function hashPw(pw,salt){
@@ -1002,29 +1003,32 @@ async function doLoginForm(ev){
 function authReset(){
  if(!RST)RST={step:0};
  const back=`<button type="button" class="lnk" onclick="RST=null;go('#/auth/login')">رجوع لتسجيل الدخول</button>`;
- return `<h2>نسيت كلمة السر؟</h2><p class="mut" style="margin-bottom:14px">استرجاع كلمة السر بكود SMS لسه مش متفعّل. كلّم فريق دورلي وهنساعدك ترجع لحسابك بعد ما نتأكد إنه بتاعك.</p>${back}`;
- if(RST.step===1)return `<h2>اكتب كود التأكيد</h2><p class="mut">لو الرقم مسجّل هيوصله كود من 6 أرقام.</p><div class="callout">كود التأكيد: <b dir="ltr" style="font-size:18px">${RST.code}</b></div><form class="form" onsubmit="resetVerify(event)"><label>الكود<input id="r_otp" inputmode="numeric" maxlength="6" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button><div style="display:flex;gap:10px;align-items:center"><button type="button" class="btn ghost sm" id="rs" onclick="resetSend()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span></div></form>`;
+ if(RST.step===0)return `<h2>نسيت كلمة السر؟</h2><p class="mut" style="margin-bottom:14px">اكتب رقم موبايلك وهنبعتلك كود تأكيد في رسالة SMS.</p><form class="form" onsubmit="resetSend(event)"><label>رقم الموبايل<input id="r_ph" required inputmode="tel" dir="ltr" style="text-align:start"></label><div id="rerr"></div><button class="btn primary">إرسال الكود</button>${back}</form>`;
+ if(RST.step===1)return `<h2>اكتب كود التأكيد</h2><p class="mut">لو الرقم مسجّل هتوصله رسالة SMS فيها كود من 6 أرقام.</p><form class="form" onsubmit="resetVerify(event)"><label>الكود<input id="r_otp" inputmode="numeric" maxlength="6" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button><div style="display:flex;gap:10px;align-items:center"><button type="button" class="btn ghost sm" id="rs" onclick="resetSend()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span></div></form>`;
  return `<h2>كلمة سر جديدة</h2><form class="form" onsubmit="resetSave(event)"><label>كلمة السر الجديدة<div style="position:relative"><input id="r_pw" type="password" autocomplete="new-password" style="padding-inline-end:64px"><button type="button" class="pwt" onclick="togglePw('r_pw',this)">إظهار</button></div><span class="mut" style="font-size:12px;font-weight:400">8 حروف على الأقل، فيها حروف وأرقام.</span></label><label>تأكيد كلمة السر<input id="r_pw2" type="password" autocomplete="new-password"></label><div id="rerr"></div><button class="btn primary">حفظ</button></form>`;
 }
-function resetSend(ev){
+async function resetSend(ev){
  if(ev)ev.preventDefault();
  const ph=RST.phone||normPhone($('#r_ph').value);
  if(!okPhone(ph)){showErr(['اكتب رقم موبايل مصري صحيح']);return}
- RST={step:1,phone:ph,code:genOtp(),tries:0,sent:Date.now(),exists:DB.users.some(u=>u.phone===ph)};viewAuth('reset');
+ const r=await Cloud.otp({action:'send',phone:ph,purpose:'reset'});
+ if(r.error){showErr([otpMsg(r.error)]);return}
+ RST={step:1,phone:ph,sent:Date.now()};viewAuth('reset');
 }
-function resetVerify(ev){
+async function resetVerify(ev){
  ev.preventDefault();const v=toEn($('#r_otp').value.trim());
- if(RST.tries>=5){showErr(['جرّبت كتير. اطلب كود جديد.']);return}
- if(v!==RST.code){RST.tries++;showErr(['الكود غلط ('+(5-RST.tries)+' محاولات متبقية)']);return}
- RST.step=2;viewAuth('reset');
+ if(!/^\d{4,10}$/.test(v)){showErr([otpMsg('code')]);return}
+ const r=await Cloud.otp({action:'check',phone:RST.phone,code:v,purpose:'reset'});
+ if(r.error){showErr([otpMsg(r.error)]);return}
+ RST.token=r.token;RST.step=2;viewAuth('reset');
 }
 async function resetSave(ev){
  ev.preventDefault();const p=$('#r_pw').value,p2=$('#r_pw2').value;
- if(p.length<8||!/\d/.test(p)||!/[A-Za-z؀-ۿ]/.test(p)){showErr(['كلمة السر لازم تكون 8 حروف على الأقل وفيها حروف وأرقام']);return}
+ if(p.length<8||!/\d/.test(p)||!/[A-Za-z\u0600-\u06FF]/.test(p)){showErr(['كلمة السر لازم تكون 8 حروف على الأقل وفيها حروف وأرقام']);return}
  if(p!==p2){showErr(['كلمتين السر مش متطابقين']);return}
- const u=DB.users.find(u=>u.phone===RST.phone);
- if(u){u.salt=Math.random().toString(36).slice(2);u.pw=await hashPw(p,u.salt);save()}
- RST=null;toast('لو الحساب موجود، كلمة السر اتغيّرت. ادخل بيها دلوقتي.');go('#/auth/login');
+ const r=await Cloud.otp({action:'reset',phone:RST.phone,token:RST.token,password:p});
+ if(r.error){showErr([r.error==='token'?'الكود انتهت صلاحيته. ابدأ من الأول.':'حصلت مشكلة. جرّب تاني.']);return}
+ RST=null;toast('كلمة السر اتغيّرت. ادخل بيها دلوقتي.');go('#/auth/login');
 }
 function startCd(o){
  const src=o||REG;clearInterval(OTPT);
@@ -1064,7 +1068,7 @@ function regStepHtml(st){
   <div class="form">${fld('name',r==='merchant'?'اسم صاحب النشاط بالكامل':'اسمك بالكامل',{req:1,ac:'name',hint:'بيستخدم في التحقق فقط، مش بيتعرض علناً.'})}${fld('phone','رقم الموبايل',{req:1,type:'tel',ac:'tel',attr:'dir="ltr" style="text-align:start" inputmode="tel"',ph:'01012345678'})}${fld('email','الإيميل (اختياري)',{type:'email',ac:'email',attr:'dir="ltr" style="text-align:start"'})}
   <div class="two">${pwf('password','كلمة السر','8 حروف على الأقل، فيها حروف وأرقام.')}${pwf('password2','تأكيد كلمة السر')}</div>
   <label class="chkl"><input type="checkbox" ${d.terms?'checked':''} onchange="REG.d.terms=this.checked"> <span>موافق على شروط الاستخدام وسياسة الخصوصية، وإن بياناتي ومستنداتي بتتستخدم للتحقق بس.</span></label></div>${regNav(st,{next:'التالي: تأكيد الموبايل'})}`;
- case 'otp':return `<h2>أكّد رقم موبايلك</h2><p class="mut">بعتنالك كود من 6 أرقام على <b dir="ltr">${esc(normPhone(d.phone))}</b>.</p><div class="callout">كود التأكيد: <b dir="ltr" style="font-size:18px">${REG.otp.code}</b></div>
+ case 'otp':return `<h2>أكّد رقم موبايلك</h2><p class="mut">بعتنالك رسالة SMS فيها كود من 6 أرقام على <b dir="ltr">${esc(normPhone(d.phone))}</b>.</p>
   <form class="form" onsubmit="otpVerify(event)"><label>كود التأكيد<input id="f_otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code" style="letter-spacing:8px;text-align:center;font-size:22px"></label><div id="rerr"></div><button class="btn primary">تأكيد</button></form>
   <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn ghost sm" id="rs" onclick="resendOtp()" disabled>إعادة إرسال</button><span class="mut" id="rcd"></span><button class="btn ghost sm" onclick="regBack()">تغيير الرقم</button></div>`;
  case 'identity':return `<h2>إثبات هويتك <span class="tag">اختياري دلوقتي</span></h2><p class="mut" style="margin-bottom:10px">عشان تاخد شارة «هوية البائع متحققة» ويثق فيك المشتري أسرع. مش بنسأل عن رقم البطاقة.</p><div class="callout" style="margin:0 0 12px">${I('lock',14)} صور البطاقة بيشوفها فريق التحقق بس، ومش بتتعرض للمشترين ولا بتتنشر أبداً. الشارة بتتمنح بعد المراجعة.</div>
@@ -1097,8 +1101,8 @@ function validate(st){
  if(st==='profile'){if(r==='individual'){need('display','اكتب الاسم اللي هيظهر للمشترين');need('gov','اختار المحافظة')}if(d.bio&&d.bio.length>300)e.push('النبذة أطول من 300 حرف');if(d.whatsapp&&!okPhone(d.whatsapp))e.push('رقم الواتساب مش مظبوط')}
  return e;
 }
-function sendOtp(){REG.otp={code:genOtp(),tries:0,sent:Date.now()}}
-function resendOtp(){sendOtp();viewAuth('register');toast('بعتنالك كود جديد')}
+async function sendOtp(){const r=await Cloud.otp({action:'send',phone:normPhone(REG.d.phone),purpose:'signup'});if(r.error)return otpMsg(r.error);REG.otp={sent:Date.now()};REG.otpToken=null}
+async function resendOtp(){const b=$('#rs');if(b)b.disabled=true;const e=await sendOtp();if(e){showErr([e]);if(b)b.disabled=false;return}viewAuth('register');toast('بعتنالك كود جديد')}
 async function advance(){
  const n=REG.step+1,steps=RSTEPS[REG.role];
  if(steps[n]==='profile'&&REG.role==='individual'&&!REG.d.display)REG.d.display=autoDisplay(REG.d.name);
@@ -1109,18 +1113,18 @@ async function regNext(skip){
  const st=RSTEPS[REG.role][REG.step],e=skip?[]:validate(st);
  if(e.length){showErr(e);return}
  if(st==='account'){const t=await Cloud.taken(normPhone(REG.d.phone),(REG.d.email||'').trim());if(t){showErr([t==='phone'?'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول':'الإيميل ده مسجّل قبل كده']);return}}
- if(st==='account'){const p=normPhone(REG.d.phone);if(REG.phoneOk&&REG.vph===p)REG.step++;else{REG.phoneOk=false;sendOtp()}}
+ if(st==='account'){const p=normPhone(REG.d.phone);if(REG.phoneOk&&REG.vph===p)REG.step++;else{REG.phoneOk=false;toast('جاري إرسال الكود…');const e2=await sendOtp();if(e2){showErr([e2]);return}}}
  await advance();
 }
 function regBack(){
  if(REG.created)return;let t=REG.step-1;if(RSTEPS[REG.role][t]==='otp')t--;REG.step=Math.max(0,t);viewAuth('register');window.scrollTo(0,0);
 }
-function otpVerify(ev){
- ev.preventDefault();const v=toEn($('#f_otp').value.trim()),o=REG.otp;
- if(o.tries>=5){showErr(['جرّبت كتير. اطلب كود جديد.']);return}
- if(Date.now()-o.sent>10*60*1000){showErr(['الكود انتهى. اطلب كود جديد.']);return}
- if(v!==o.code){o.tries++;showErr(['الكود غلط ('+(5-o.tries)+' محاولات متبقية)']);return}
- REG.phoneOk=true;REG.vph=normPhone(REG.d.phone);advance();
+async function otpVerify(ev){
+ ev.preventDefault();const v=toEn($('#f_otp').value.trim()),btn=ev.submitter||$('#f_otp').form.querySelector('button');
+ if(!/^\d{4,10}$/.test(v)){showErr([otpMsg('code')]);return}
+ btn.disabled=true;const r=await Cloud.otp({action:'check',phone:normPhone(REG.d.phone),code:v,purpose:'signup'});btn.disabled=false;
+ if(r.error){showErr([otpMsg(r.error)]);return}
+ REG.otpToken=r.token;REG.phoneOk=true;REG.vph=normPhone(REG.d.phone);advance();
 }
 async function finalizeReg(){
  if(REG.created||REG.busy)return;
@@ -1129,9 +1133,10 @@ async function finalizeReg(){
  if(role!=='customer'&&f.idf&&f.idb)verifs.push({kind:'identity',docs:doc([['البطاقة (وش)',f.idf],['البطاقة (ضهر)',f.idb]].concat(f.selfie?[['سيلفي بالبطاقة',f.selfie]]:[]))});
  const P={bio:d.bio||'',hours:d.hours||'',whatsapp:d.whatsapp?normPhone(d.whatsapp):'',activity:d.activity||'',branches:d.branches||'',address:d.address||'',web:d.web||'',crNo:d.crNo||'',taxNo:d.taxNo||'',owner:d.name,gov:d.gov||'',area:d.area||''};
  REG.busy=true;toast('جاري إنشاء الحساب…');
- const r=await Cloud.signUp({role,name:d.name.trim(),phone:normPhone(d.phone),email:(d.email||'').trim(),password:d.password,today:TODAY,
+ const r=await Cloud.signUp({role,name:d.name.trim(),phone:normPhone(d.phone),email:(d.email||'').trim(),password:d.password,today:TODAY,otpToken:REG.otpToken,
   seller:role==='customer'?null:{name:role==='merchant'?d.bizName.trim():(d.display||autoDisplay(d.name)).trim(),profile:P},verifs});
  REG.busy=false;
+ if(r.error==='otp'){REG.phoneOk=false;return 'انتهت صلاحية تأكيد الرقم. ارجع لأول خطوة واطلب كود جديد.'}
  if(r.error)return r.error==='taken_phone'?'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول':r.error==='taken_email'?'الإيميل ده مسجّل قبل كده':'حصلت مشكلة في إنشاء الحساب. جرّب تاني بعد شوية.';
  DB=r.db;setSession();REG.created={id:USER.uid,name:d.name.trim(),role,sellerId:USER.sellerId};
 }

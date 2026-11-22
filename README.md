@@ -28,8 +28,18 @@ select set_config('request.jwt.claims','{"role":"service_role"}',false);
 update dorly_profiles set role = 'admin' where phone = '01XXXXXXXXX';
 ```
 
+### SMS codes (Twilio Verify)
+
+Sign-up and password reset send a real SMS code through the `dorly-otp` Edge Function. Sign-up refuses any phone number that wasn't verified this way. The function needs three secrets, set in Supabase under **Edge Functions → Secrets**:
+
+| Secret | Where to find it |
+|---|---|
+| `TWILIO_ACCOUNT_SID` | Twilio Console home page ("Account SID") |
+| `TWILIO_AUTH_TOKEN` | Twilio Console home page ("Auth Token") |
+| `TWILIO_VERIFY_SID` | Twilio Console → Verify → Services → your service ("Service SID", starts with `VA`) |
+
+Until they are set, sign-up and password reset show "خدمة الرسايل مش متاحة دلوقتي".
+
 ### Known limits
 
-- Phone codes (OTP) are still simulated on screen. Real SMS needs an SMS provider, such as Twilio, configured in Supabase Auth.
-- Password reset needs that SMS provider too, so for now the reset page asks users to contact the team.
 - Verification documents (ID, commercial register) are recorded by file name only and are not uploaded yet.
