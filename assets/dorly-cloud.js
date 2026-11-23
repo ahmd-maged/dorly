@@ -115,6 +115,19 @@
     });
   }
 
+  // Defensive shape fixes so one malformed row cannot crash rendering for everybody.
+  // Applied before the snapshot is taken, so it never causes a write by itself.
+  function normalize(c, o) {
+    if (c === 'sellers') {
+      if (!Array.isArray(o.badges)) o.badges = [];
+      o.badges = o.badges.filter(b => typeof b === 'string');
+      if (o.profile != null && typeof o.profile !== 'object') o.profile = {};
+    }
+    if (c === 'listings' && 'acc' in o && !Array.isArray(o.acc)) o.acc = [];
+    if (c === 'verifs' && !Array.isArray(o.docs)) o.docs = [];
+    return o;
+  }
+
   /* ---------- load everything this visitor is allowed to see ---------- */
   async function load() {
     session = (await sb.auth.getSession()).data.session;
@@ -133,7 +146,7 @@
     snap = {};
     colls.forEach((c, i) => {
       const rows = ordered(res[i], T[c].order);
-      DB[c] = rows.map(r => Object.assign({}, r.data, { id: r.id }));
+      DB[c] = rows.map(r => normalize(c, Object.assign({}, r.data, { id: r.id })));
       snap[c] = new Map(DB[c].map(o => [o.id, JSON.stringify(serialize(c, o))]));
     });
     privSnap = new Map(); lPrivSnap = new Map();

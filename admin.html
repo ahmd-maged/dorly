@@ -350,11 +350,33 @@ const sScore=l=>{const s=sel(l.seller);return s.badges.length*2+(s.badges.includ
 const sType=s=>s.type==='merchant'?'تاجر':'فرد';
 const byId=id=>DB.listings.find(l=>l.id===id);
 
+/* ---- Output safety (security phase 1) ----
+   Rule: every value that comes from the database is escaped with esc() where it is put into HTML,
+   image addresses must pass safeImg(), and database IDs are never placed inside inline JavaScript.
+   Buttons/forms carry data-click / data-change / data-submit + data-id and are handled by one
+   delegated listener that only calls functions listed in ACT. */
+const condT=k=>(Object.prototype.hasOwnProperty.call(COND,k)?COND[k]:{t:'—'}).t;
+const devHref=id=>'dorly.html#/device/'+encodeURIComponent(String(id));
+const sellerHref=id=>'dorly.html#/seller/'+encodeURIComponent(String(id));
+function safeImg(u){u=String(u==null?'':u);
+ if(/^https:\/\/[a-z0-9-]+\.supabase\.co\/storage\/v1\/object\/(public|sign)\/[^"'<>\s\\]+$/i.test(u))return u;
+ if(/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+\/=]+$/i.test(u))return u;
+ return ''}
+const dclick=(n,id)=>`data-click="${n}" data-id="${esc(id)}"`;
+const dsubmit=(n,id)=>`data-submit="${n}" data-id="${esc(id)}"`;
+const ACT=Object.create(null);
+['click','change','submit'].forEach(type=>document.addEventListener(type,e=>{
+ const el=e.target&&e.target.closest?e.target.closest('[data-'+type+']'):null;if(!el)return;
+ const f=ACT[el.getAttribute('data-'+type)];if(typeof f!=='function')return;
+ if(type==='submit')e.preventDefault();
+ f(el.getAttribute('data-id'),el,e);
+}));
+
 function phone(l){
- const _ph=lphotos(l);if(_ph.length)return `<img src="${_ph[0]}" alt="">`;
-  const c=COL[l.color]||'#94a3b8',pro=/Pro/.test(l.variant||'');
+ const _ph=lphotos(l);if(_ph.length)return `<img src="${esc(_ph[0])}" alt="">`;
+  const c=(Object.prototype.hasOwnProperty.call(COL,l.color)&&COL[l.color])||'#94a3b8',pro=/Pro/.test(String(l.variant||'')),gid='g'+String(l.id).replace(/[^A-Za-z0-9_-]/g,'_');
  const cams=pro?`<circle cx="33" cy="28" r="6.5" fill="#0F172A" stroke="#64748b"/><circle cx="49" cy="28" r="6.5" fill="#0F172A" stroke="#64748b"/><circle cx="41" cy="43" r="6.5" fill="#0F172A" stroke="#64748b"/>`:`<circle cx="33" cy="26" r="7" fill="#0F172A" stroke="#64748b"/><circle cx="33" cy="42" r="7" fill="#0F172A" stroke="#64748b"/>`;
- return `<svg viewBox="0 0 120 200" class="ph" aria-hidden="true"><defs><linearGradient id="g${l.id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity=".7"/></linearGradient></defs><rect x="10" y="4" width="100" height="192" rx="22" fill="url(#g${l.id})" stroke="rgba(15,23,42,.15)" stroke-width="2"/><rect x="20" y="14" width="${pro?44:38}" height="${pro?44:38}" rx="12" fill="rgba(15,23,42,.18)"/>${cams}</svg>`;
+ return `<svg viewBox="0 0 120 200" class="ph" aria-hidden="true"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity=".7"/></linearGradient></defs><rect x="10" y="4" width="100" height="192" rx="22" fill="url(#${gid})" stroke="rgba(15,23,42,.15)" stroke-width="2"/><rect x="20" y="14" width="${pro?44:38}" height="${pro?44:38}" rx="12" fill="rgba(15,23,42,.18)"/>${cams}</svg>`;
 }
 
 
@@ -370,15 +392,15 @@ const DEF_T={none:'مفيش عيوب أو خدوش',minor:'خدوش بسيطة',
 const WAR_T={none:'مفيش ضمان',apple:'ضمان أبل ساري',shop:'ضمان المحل'};
 const NET_T={factory:'فاكتوري (مفتوح على كل الشبكات)',locked:'مقفول على شبكة معيّنة',unknown:'مش متأكد'};
 let PUB=null,PUBDONE=null;
-const lphotos=l=>l.pubPhotos?PHOTO_SLOTS.map(s=>l.pubPhotos[s[0]]).filter(Boolean):(l.photos||[]);
-const lshots=l=>l.shots?SHOT_SLOTS.filter(s=>l.shots[s[0]]).map(s=>({key:s[0],label:s[1],src:l.shots[s[0]]})):[];
+const lphotos=l=>(l.pubPhotos&&typeof l.pubPhotos==='object'?PHOTO_SLOTS.map(s=>l.pubPhotos[s[0]]):(Array.isArray(l.photos)?l.photos:[])).map(safeImg).filter(Boolean);
+const lshots=l=>l.shots&&typeof l.shots==='object'?SHOT_SLOTS.filter(s=>safeImg(l.shots[s[0]])).map(s=>({key:s[0],label:s[1],src:safeImg(l.shots[s[0]])})):[];
 
 function openModal(h){const m=$('#modal');m.innerHTML=`<div class="mbox">${h}</div>`;m.classList.add('on')}
 function closeModal(){$('#modal').classList.remove('on')}
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),2800)}
 const okMail=s=>/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
 const togglePw=(id,btn)=>{const i=$('#'+id);i.type=i.type==='password'?'text':'password';btn.textContent=i.type==='password'?'إظهار':'إخفاء'};
-function viewImg(src){openModal(`<img src="${src}" alt="" style="max-width:100%;border-radius:12px;display:block;margin:auto"><button class="btn ghost" style="margin-top:12px;width:100%" onclick="closeModal()">إغلاق</button>`)}
+function viewImg(src){openModal(`<img src="${esc(safeImg(src))}" alt="" style="max-width:100%;border-radius:12px;display:block;margin:auto"><button class="btn ghost" style="margin-top:12px;width:100%" onclick="closeModal()">إغلاق</button>`)}
 async function hashPw(pw,salt){
  try{const b=new TextEncoder().encode(salt+pw);const h=await crypto.subtle.digest('SHA-256',b);return [...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('')}
  catch(e){let h=5381;for(const c of salt+pw)h=((h<<5)+h+c.charCodeAt(0))>>>0;return 'x'+h}
@@ -386,9 +408,9 @@ async function hashPw(pw,salt){
 
 function admVerif(){
  const q=DB.verifs.filter(v=>v.status==='pending'),KL={identity:'هوية',merchant:'تاجر موثّق'};
- return `<h3 style="margin:18px 0 10px">طلبات التوثيق (${q.length})</h3>`+(q.length?`<div style="display:grid;gap:10px">${q.map(v=>{const s=sel(v.seller),P=s.profile||{};return `<div class="card" style="padding:14px 18px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><div style="flex:1;min-width:240px"><b>${esc(s.name)}</b> <span class="tag ${s.type==='merchant'?'mer':''}">${sType(s)}</span> <span class="tag warn">طلب: ${KL[v.kind]}</span><div class="mut" style="font-size:13px">${v.time}${v.kind==='merchant'&&P.crNo?` · سجل: ${esc(P.crNo)} · ضريبية: ${esc(P.taxNo||'—')}`:''}${P.owner?` · المالك: ${esc(P.owner)}`:''}</div><div class="meta" style="margin-top:6px">${v.docs.map(d=>`<span class="tag">${I('image',12)} ${esc(d.label)}${d.name&&d.name!=='—'?': '+esc(d.name):''}</span>`).join('')}</div></div><div style="display:flex;gap:8px"><button class="btn primary sm" onclick="admV('${v.id}')">اعتماد</button><button class="btn danger sm" onclick="admRejectV('${v.id}')">رفض</button></div></div></div>`}).join('')}</div><p class="mut" style="margin-top:6px">الاعتماد بعد مراجعة المستندات فقط — مش بيتباع ومش مرتبط باشتراك.</p>`:'<div class="card empty">مفيش طلبات توثيق معلّقة.</div>');
+ return `<h3 style="margin:18px 0 10px">طلبات التوثيق (${q.length})</h3>`+(q.length?`<div style="display:grid;gap:10px">${q.map(v=>{const s=sel(v.seller),P=s.profile||{},docs=Array.isArray(v.docs)?v.docs:[];return `<div class="card" style="padding:14px 18px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><div style="flex:1;min-width:240px"><b>${esc(s.name)}</b> <span class="tag ${s.type==='merchant'?'mer':''}">${sType(s)}</span> <span class="tag warn">طلب: ${esc(KL[v.kind]||v.kind)}</span><div class="mut" style="font-size:13px">${esc(v.time||'')}${v.kind==='merchant'&&P.crNo?` · سجل: ${esc(P.crNo)} · ضريبية: ${esc(P.taxNo||'—')}`:''}${P.owner?` · المالك: ${esc(P.owner)}`:''}</div><div class="meta" style="margin-top:6px">${docs.map(d=>`<span class="tag">${I('image',12)} ${esc(d.label)}${d.name&&d.name!=='—'?': '+esc(d.name):''}</span>`).join('')}</div></div><div style="display:flex;gap:8px"><button class="btn primary sm" ${dclick('admV',v.id)}>اعتماد</button><button class="btn danger sm" ${dclick('admRejectV',v.id)}>رفض</button></div></div></div>`}).join('')}</div><p class="mut" style="margin-top:6px">الاعتماد بعد مراجعة المستندات فقط — مش بيتباع ومش مرتبط باشتراك.</p>`:'<div class="card empty">مفيش طلبات توثيق معلّقة.</div>');
 }
-function admRejectV(id){openModal(`<h2>رفض طلب التوثيق</h2><p class="mut" style="margin-bottom:10px">السبب هيظهر للبائع.</p><form class="form" onsubmit="admRejectDo(event,'${id}')"><label>السبب<select id="rj_s"><option>المستندات مش واضحة</option><option>البيانات مش مطابقة للمستندات</option><option>مستند ناقص</option><option>مستند منتهي</option></select></label><div style="display:flex;gap:8px"><button class="btn danger" style="flex:1">تأكيد الرفض</button><button type="button" class="btn ghost" onclick="closeModal()">إلغاء</button></div></form>`)}
+function admRejectV(id){openModal(`<h2>رفض طلب التوثيق</h2><p class="mut" style="margin-bottom:10px">السبب هيظهر للبائع.</p><form class="form" ${dsubmit('admRejectDo',id)}><label>السبب<select id="rj_s"><option>المستندات مش واضحة</option><option>البيانات مش مطابقة للمستندات</option><option>مستند ناقص</option><option>مستند منتهي</option></select></label><div style="display:flex;gap:8px"><button class="btn danger" style="flex:1">تأكيد الرفض</button><button type="button" class="btn ghost" onclick="closeModal()">إلغاء</button></div></form>`)}
 
 
 /* ---- admin: listing review with evidence ---- */
@@ -396,13 +418,13 @@ function admPending(){
  const q=DB.listings.filter(l=>l.status==='pending');
  if(!q.length)return '<div class="card empty">مفيش إعلانات بتستنى مراجعة.</div>';
  return `<div style="display:grid;gap:12px">${q.map(l=>{const s=sel(l.seller),ph=lphotos(l),sh=lshots(l),f=l.form||{};
-  return `<div class="card" style="padding:16px 18px"><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:space-between"><div><a href="dorly.html#/device/${l.id}" target="_blank"><b>${nm(l)}</b></a> · ${l.storage} · <b>${fmt(l.price)}</b> جنيه<div class="mut" style="font-size:13px">${esc(s.name)} · ${sType(s)}${l.sample?' · بيانات عينة':''} ${payTag(l)}</div></div></div>
-  <div class="meta" style="margin:8px 0"><span class="tag">بطارية مكتوبة: ${l.battery}%</span><span class="tag">${COND[l.cond].t}</span><span class="tag">${esc(l.parts||'—')}</span><span class="tag">${esc(l.defects||'—')}</span>${l.network?`<span class="tag">${esc(l.network)}</span>`:''}${l.warranty?`<span class="tag">${esc(l.warranty)}</span>`:''}${f.imei?'<span class="tag">IMEI: مقدّم (مخفي)</span>':''}</div>
-  ${ph.length||sh.length?`<div class="hnt">صور الجهاز (${ph.length})</div><div class="meta" style="margin-bottom:6px">${ph.map(p=>`<img src="${p}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:10px;border:1px solid var(--bd);cursor:zoom-in" onclick="viewImg(this.src)">`).join('')}</div><div class="hnt">لقطات الإعدادات — خاصة (${sh.length})</div><div class="meta">${sh.map(x=>`<div style="text-align:center"><img src="${x.src}" alt="" style="width:56px;height:80px;object-fit:cover;border-radius:10px;border:1px solid var(--bd);cursor:zoom-in" onclick="viewImg(this.src)"><div class="hnt">${x.label}</div></div>`).join('')}</div>`:'<div class="callout" style="margin:6px 0">مفيش صور أو لقطات (بيانات عينة قديمة).</div>'}
-  <label class="chkl" style="margin-top:10px"><input type="checkbox" id="adm_ok_${l.id}" ${sh.length?'':'disabled'}> <span>راجعت البيانات المكتوبة مقابل لقطات الإعدادات وهي متطابقة (يرفع المستوى لـ «البيانات متراجعة»)</span></label>
-  <div style="display:flex;gap:8px;margin-top:10px">${isUnpaid(l)?`<button class="btn ghost sm" onclick="admMarkPaid('${l.id}')">تأكيد استلام الدفع</button>`:''}<button class="btn primary sm" onclick="admApprove('${l.id}')" ${isUnpaid(l)?'disabled title="مستني الدفع"':''}>موافقة ونشر</button><button class="btn danger sm" onclick="admRejectL('${l.id}')">رفض</button></div></div>`}).join('')}</div>`;
+  return `<div class="card" style="padding:16px 18px"><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:space-between"><div><a href="${esc(devHref(l.id))}" target="_blank" rel="noopener"><b>${esc(nm(l))}</b></a> · ${esc(l.storage)} · <b>${fmt(l.price)}</b> جنيه<div class="mut" style="font-size:13px">${esc(s.name)} · ${sType(s)}${l.sample?' · بيانات عينة':''} ${payTag(l)}</div></div></div>
+  <div class="meta" style="margin:8px 0"><span class="tag">بطارية مكتوبة: ${esc(l.battery)}%</span><span class="tag">${esc(condT(l.cond))}</span><span class="tag">${esc(l.parts||'—')}</span><span class="tag">${esc(l.defects||'—')}</span>${l.network?`<span class="tag">${esc(l.network)}</span>`:''}${l.warranty?`<span class="tag">${esc(l.warranty)}</span>`:''}${f.imei?'<span class="tag">IMEI: مقدّم (مخفي)</span>':''}</div>
+  ${ph.length||sh.length?`<div class="hnt">صور الجهاز (${ph.length})</div><div class="meta" style="margin-bottom:6px">${ph.map(p=>`<img src="${esc(p)}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:10px;border:1px solid var(--bd);cursor:zoom-in" onclick="viewImg(this.src)">`).join('')}</div><div class="hnt">لقطات الإعدادات — خاصة (${sh.length})</div><div class="meta">${sh.map(x=>`<div style="text-align:center"><img src="${esc(x.src)}" alt="" style="width:56px;height:80px;object-fit:cover;border-radius:10px;border:1px solid var(--bd);cursor:zoom-in" onclick="viewImg(this.src)"><div class="hnt">${esc(x.label)}</div></div>`).join('')}</div>`:'<div class="callout" style="margin:6px 0">مفيش صور أو لقطات (بيانات عينة قديمة).</div>'}
+  <label class="chkl" style="margin-top:10px"><input type="checkbox" data-okfor="${esc(l.id)}" ${sh.length?'':'disabled'}> <span>راجعت البيانات المكتوبة مقابل لقطات الإعدادات وهي متطابقة (يرفع المستوى لـ «البيانات متراجعة»)</span></label>
+  <div style="display:flex;gap:8px;margin-top:10px">${isUnpaid(l)?`<button class="btn ghost sm" ${dclick('admMarkPaid',l.id)}>تأكيد استلام الدفع</button>`:''}<button class="btn primary sm" ${dclick('admApprove',l.id)} ${isUnpaid(l)?'disabled title="مستني الدفع"':''}>موافقة ونشر</button><button class="btn danger sm" ${dclick('admRejectL',l.id)}>رفض</button></div></div>`}).join('')}</div>`;
 }
-function admRejectL(id){openModal(`<h2>رفض الإعلان</h2><p class="mut" style="margin-bottom:10px">السبب هيظهر للبائع.</p><form class="form" onsubmit="admRejectLDo(event,'${id}')"><label><span>السبب</span><select id="rjl_s"><option>الصور مش واضحة أو ناقصة</option><option>لقطات الإعدادات مش مطابقة للبيانات المكتوبة</option><option>الصور مش للجهاز المعروض</option><option>بيانات ناقصة أو غير منطقية</option></select></label><div style="display:flex;gap:8px"><button class="btn danger" style="flex:1">تأكيد الرفض</button><button type="button" class="btn ghost" onclick="closeModal()">إلغاء</button></div></form>`)}
+function admRejectL(id){openModal(`<h2>رفض الإعلان</h2><p class="mut" style="margin-bottom:10px">السبب هيظهر للبائع.</p><form class="form" ${dsubmit('admRejectLDo',id)}><label><span>السبب</span><select id="rjl_s"><option>الصور مش واضحة أو ناقصة</option><option>لقطات الإعدادات مش مطابقة للبيانات المكتوبة</option><option>الصور مش للجهاز المعروض</option><option>بيانات ناقصة أو غير منطقية</option></select></label><div style="display:flex;gap:8px"><button class="btn danger" style="flex:1">تأكيد الرفض</button><button type="button" class="btn ghost" onclick="closeModal()">إلغاء</button></div></form>`)}
 
 /* =========================================================
    Admin console (prototype). Accounts live in localStorage; real security needs a server:
@@ -416,7 +438,7 @@ const payTag=l=>!l.pay?'':l.pay.status==='paid'?`<span class="tag ok">مدفوع
 function admMarkPaid(id){if(!isAdm())return;const l=byId(id);if(!l||!isUnpaid(l))return;if(!confirm(`تأكيد استلام ${fmt(l.pay.amount)} جنيه رسوم نشر ${nm(l)}؟`))return;
  l.pay=Object.assign({},l.pay,{status:'paid',method:'manual',at:Date.now(),by:USER.name});aud(`تأكيد دفع رسوم نشر ${nm(l)} (${id}) — ${l.pay.amount} جنيه`);toast('اتأكد الدفع');route()}
 const LST={active:['منشور','ok'],pending:['قيد المراجعة','warn'],paused:['موقوف',''],sold:['اتباع',''],rejected:['مرفوض','']};
-const lstTag=s=>{const x=LST[s]||[s,''];return `<span class="tag ${x[1]}"${s==='rejected'?' style="background:#fee2e2;color:#b91c1c"':''}>${x[0]}</span>`};
+const lstTag=s=>{const x=(Object.prototype.hasOwnProperty.call(LST,s)&&LST[s])||[String(s),''];return `<span class="tag ${x[1]}"${s==='rejected'?' style="background:#fee2e2;color:#b91c1c"':''}>${esc(x[0])}</span>`};
 const fdt=t=>new Date(t).toLocaleString('ar-EG',{timeZone:'Africa/Cairo',dateStyle:'medium',timeStyle:'short'});
 function aud(txt){DB.audit=DB.audit||[];DB.audit.unshift({id:'A'+Date.now()+Math.random().toString(36).slice(2,6),t:Date.now(),by:USER?USER.name:'—',txt});DB.audit=DB.audit.slice(0,500);save()}
 const pwOk=p=>p.length>=8&&/[A-Za-z]/.test(p)&&/\d/.test(p);
@@ -441,7 +463,7 @@ function admOverview(){
  return `<div class="stats"><div class="card stat"><b>${fmt(L.filter(l=>l.pay&&l.pay.status==='paid').reduce((a,l)=>a+(+l.pay.amount||0),0))}</b><span>إيرادات رسوم النشر (جنيه)</span></div><div class="card stat"><b>${c('active')}</b><span>منشورة</span></div><div class="card stat"><b>${c('pending')}</b><span>قيد المراجعة</span></div><div class="card stat"><b>${c('paused')}</b><span>موقوفة</span></div><div class="card stat"><b>${c('sold')}</b><span>اتباعت</span></div><div class="card stat"><b>${c('rejected')}</b><span>مرفوضة</span></div><div class="card stat"><b>${DB.sellers.length}</b><span>بائعين</span></div><div class="card stat"><b>${DB.users.filter(u=>u.role!=='admin').length}</b><span>حسابات مسجّلة</span></div><div class="card stat"><b>${fmt(avg)}</b><span>متوسط سعر المنشور (جنيه)</span></div></div>
  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
  <div class="card" style="padding:16px 18px"><h3 style="margin-bottom:10px">محتاج تدخل</h3>${todo.map(t=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--bd)"><span>${t[1]}</span><span><b>${t[2]}</b> <button class="btn ghost sm" onclick="admTab('${t[0]}')">افتح</button></span></div>`).join('')}</div>
- <div class="card" style="padding:16px 18px"><h3 style="margin-bottom:10px">المنشور حسب الجيل</h3>${Object.keys(gens).sort((a,b)=>a-b).map(g=>`<div style="display:flex;align-items:center;gap:8px;margin:6px 0"><span style="width:88px;white-space:nowrap">iPhone ${g}</span><div style="flex:1;background:var(--bd);border-radius:6px;height:12px"><i style="display:block;height:12px;border-radius:6px;background:var(--p);width:${gens[g]/mx*100}%"></i></div><b>${gens[g]}</b></div>`).join('')||'<span class="mut">لا يوجد.</span>'}</div>
+ <div class="card" style="padding:16px 18px"><h3 style="margin-bottom:10px">المنشور حسب الجيل</h3>${Object.keys(gens).sort((a,b)=>a-b).map(g=>`<div style="display:flex;align-items:center;gap:8px;margin:6px 0"><span style="width:88px;white-space:nowrap">iPhone ${esc(g)}</span><div style="flex:1;background:var(--bd);border-radius:6px;height:12px"><i style="display:block;height:12px;border-radius:6px;background:var(--p);width:${gens[g]/mx*100}%"></i></div><b>${gens[g]}</b></div>`).join('')||'<span class="mut">لا يوجد.</span>'}</div>
  <div class="card" style="padding:16px 18px"><h3 style="margin-bottom:10px">آخر النشاط</h3>${ev.map(e=>`<div style="padding:6px 0;border-bottom:1px dashed var(--bd);font-size:14px">${e.x}${e.t?`<div class="mut" style="font-size:12px">${fdt(e.t)}</div>`:''}</div>`).join('')||'<span class="mut">لسه مفيش نشاط مسجّل.</span>'}</div></div>
  <p class="mut" style="margin-top:12px;font-size:13px">ملحوظة: مفيش تتبّع زيارات أو محادثات — الأرقام فوق من بيانات المنصة نفسها بس.</p>`;
 }
@@ -452,7 +474,7 @@ function admRows(){
 }
 function admListTbl(){
  const r=admRows();
- return r.length?`<div class="scroll-x"><table class="tbl"><tr><th>الجهاز</th><th>السعة</th><th>البطارية</th><th>السعر</th><th>البائع</th><th>المستوى</th><th>الحالة</th><th></th></tr>${r.map(l=>{const s=sel(l.seller);return `<tr><td><a href="dorly.html#/device/${l.id}" target="_blank"><b>${nm(l)}</b></a><div class="mut" style="font-size:12px">${l.id}${l.sample?' · عينة':''} ${payTag(l)}</div></td><td>${l.storage}</td><td>${l.battery}%</td><td>${fmt(l.price)}</td><td>${esc(s.name)}<div class="mut" style="font-size:12px">${sType(s)}</div></td><td>${l.level||1}</td><td>${lstTag(l.status)}</td><td style="white-space:nowrap"><button class="btn ghost sm" onclick="admEdit('${l.id}')">تعديل</button> ${l.status==='pending'?`<button class="btn primary sm" onclick="admTab('review')">مراجعة</button>`:l.status==='active'?`<button class="btn soft sm" onclick="admSetL('${l.id}','paused')">إيقاف</button>`:l.status==='paused'?`<button class="btn soft sm" onclick="admSetL('${l.id}','active')">تفعيل</button>`:''} <button class="btn danger sm" onclick="admDelL('${l.id}')">حذف</button></td></tr>`}).join('')}</table></div>`:'<div class="card empty">مفيش إعلانات مطابقة.</div>';
+ return r.length?`<div class="scroll-x"><table class="tbl"><tr><th>الجهاز</th><th>السعة</th><th>البطارية</th><th>السعر</th><th>البائع</th><th>المستوى</th><th>الحالة</th><th></th></tr>${r.map(l=>{const s=sel(l.seller);return `<tr><td><a href="${esc(devHref(l.id))}" target="_blank" rel="noopener"><b>${esc(nm(l))}</b></a><div class="mut" style="font-size:12px">${esc(l.id)}${l.sample?' · عينة':''} ${payTag(l)}</div></td><td>${esc(l.storage)}</td><td>${esc(l.battery)}%</td><td>${fmt(l.price)}</td><td>${esc(s.name)}<div class="mut" style="font-size:12px">${sType(s)}</div></td><td>${esc(l.level||1)}</td><td>${lstTag(l.status)}</td><td style="white-space:nowrap"><button class="btn ghost sm" ${dclick('admEdit',l.id)}>تعديل</button> ${l.status==='pending'?`<button class="btn primary sm" onclick="admTab('review')">مراجعة</button>`:l.status==='active'?`<button class="btn soft sm" ${dclick('admPause',l.id)}>إيقاف</button>`:l.status==='paused'?`<button class="btn soft sm" ${dclick('admActivate',l.id)}>تفعيل</button>`:''} <button class="btn danger sm" ${dclick('admDelL',l.id)}>حذف</button></td></tr>`}).join('')}</table></div>`:'<div class="card empty">مفيش إعلانات مطابقة.</div>';
 }
 function admListings(){
  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px"><input placeholder="بحث بالموديل أو البائع أو الرقم" value="${esc(ADM.q)}" oninput="ADM.q=this.value;$('#adm_tbl').innerHTML=admListTbl()" style="flex:1;min-width:200px">
@@ -463,18 +485,18 @@ function admSetL(id,st){if(!isAdm())return;const l=byId(id);l.status=st;delete l
 function admDelL(id){if(!isAdm())return;const l=byId(id);if(!confirm('تحذف الإعلان ده نهائياً؟'))return;DB.listings=DB.listings.filter(x=>x.id!==id);aud(`حذف إعلان ${nm(l)} (${id})`);toast('اتحذف الإعلان');route()}
 function admEdit(id){
  const l=byId(id),opt=(a,v)=>a.map(x=>`<option value="${esc(x[0])}" ${String(x[0])===String(v)?'selected':''}>${esc(x[1])}</option>`).join('');
- openModal(`<h2>تعديل ${nm(l)}</h2><form class="form" onsubmit="admEditSave(event,'${id}')">
- <label>الجيل<input id="e_gen" type="number" min="6" max="30" required value="${l.gen}"></label>
+ openModal(`<h2>تعديل ${esc(nm(l))}</h2><form class="form" ${dsubmit('admEditSave',id)}>
+ <label>الجيل<input id="e_gen" type="number" min="6" max="30" required value="${esc(l.gen)}"></label>
  <label>الفئة<select id="e_var">${opt([['','عادي'],['mini','mini'],['Plus','Plus'],['Pro','Pro'],['Pro Max','Pro Max'],['e','e']],l.variant||'')}</select></label>
  <label>السعة<select id="e_sto">${opt(STORAGES.map(x=>[x,x]),l.storage)}</select></label>
- <label>البطارية %<input id="e_bat" type="number" min="0" max="100" required value="${l.battery}"></label>
- <label>السعر (جنيه)<input id="e_pr" type="number" min="1" required value="${l.price}"></label>
+ <label>البطارية %<input id="e_bat" type="number" min="0" max="100" required value="${esc(l.battery)}"></label>
+ <label>السعر (جنيه)<input id="e_pr" type="number" min="1" required value="${esc(l.price)}"></label>
  <label>الحالة<select id="e_cond">${opt(Object.keys(COND).map(k=>[k,COND[k].t]),l.cond)}</select></label>
  <label>اللون<select id="e_col">${opt(COLORS.map(x=>[x,x]),l.color)}</select></label>
  <label>الإصلاحات / القطع المتغيرة<input id="e_parts" value="${esc(l.parts||'')}"></label>
  <label>العيوب<input id="e_def" value="${esc(l.defects||'')}"></label>
  <label>الحالة في الموقع<select id="e_st">${opt(Object.keys(LST).map(k=>[k,LST[k][0]]),l.status)}</select></label>
- <p class="mut" style="font-size:12px">مستوى التحقق (${l.level||1}) مش بيتعدّل من هنا — بيتغيّر بس بالمراجعة أو الفحص.</p>
+ <p class="mut" style="font-size:12px">مستوى التحقق (${esc(l.level||1)}) مش بيتعدّل من هنا — بيتغيّر بس بالمراجعة أو الفحص.</p>
  <div id="e_err" class="err-txt" role="alert"></div>
  <div style="display:flex;gap:8px"><button class="btn primary" style="flex:1">حفظ</button><button type="button" class="btn ghost" onclick="closeModal()">إلغاء</button></div></form>`);
 }
@@ -489,7 +511,7 @@ function admEditSave(ev,id){
 }
 
 function admSellers(){
- return `<div class="scroll-x"><table class="tbl"><tr><th>الاسم</th><th>النوع</th><th>المدينة</th><th>الشارات</th><th>الأجهزة</th><th>الحالة</th><th></th></tr>${DB.sellers.map(s=>`<tr><td><a href="dorly.html#/seller/${s.id}" target="_blank"><b>${esc(s.name)}</b></a></td><td>${sType(s)}</td><td>${esc(s.city||'—')}</td><td>${s.badges.map(b=>BADGES[b]).join('، ')||'—'}</td><td>${DB.listings.filter(l=>l.seller===s.id).length}</td><td>${s.suspended?'<span class="tag" style="background:#fee2e2;color:#b91c1c">موقوف</span>':'<span class="tag ok">نشط</span>'}</td><td style="white-space:nowrap"><button class="btn ghost sm" onclick="admTrust('${s.id}')">${s.badges.includes('trusted')?'سحب «موثوق»':'منح «موثوق»'}</button> <button class="btn ${s.suspended?'soft':'danger'} sm" onclick="admSuspend('${s.id}')">${s.suspended?'إلغاء الإيقاف':'إيقاف البائع'}</button></td></tr>`).join('')}</table></div>`;
+ return `<div class="scroll-x"><table class="tbl"><tr><th>الاسم</th><th>النوع</th><th>المدينة</th><th>الشارات</th><th>الأجهزة</th><th>الحالة</th><th></th></tr>${DB.sellers.map(s=>`<tr><td><a href="${esc(sellerHref(s.id))}" target="_blank" rel="noopener"><b>${esc(s.name)}</b></a></td><td>${sType(s)}</td><td>${esc(s.city||'—')}</td><td>${(Array.isArray(s.badges)?s.badges:[]).map(b=>esc(BADGES[b]||b)).join('، ')||'—'}</td><td>${DB.listings.filter(l=>l.seller===s.id).length}</td><td>${s.suspended?'<span class="tag" style="background:#fee2e2;color:#b91c1c">موقوف</span>':'<span class="tag ok">نشط</span>'}</td><td style="white-space:nowrap"><button class="btn ghost sm" ${dclick('admTrust',s.id)}>${s.badges.includes('trusted')?'سحب «موثوق»':'منح «موثوق»'}</button> <button class="btn ${s.suspended?'soft':'danger'} sm" ${dclick('admSuspend',s.id)}>${s.suspended?'إلغاء الإيقاف':'إيقاف البائع'}</button></td></tr>`).join('')}</table></div>`;
 }
 function admSuspend(sid){
  if(!isAdm())return;const s=sel(sid);
@@ -501,16 +523,16 @@ function admSuspend(sid){
 }
 function admInq(){
  const q=DB.inquiries;
- return q.length?`<div class="scroll-x"><table class="tbl"><tr><th>الوقت</th><th>البائع</th><th>الجهاز</th><th>العميل</th><th>الرسالة</th><th>الحالة</th><th></th></tr>${q.map(x=>{const l=byId(x.listing);return `<tr><td>${esc(x.time)}</td><td>${esc(sel(x.seller).name)}</td><td>${l?nm(l):'—'}</td><td>${esc(x.name)}<div class="mut" dir="ltr" style="font-size:12px;text-align:start">${esc(x.phone)}</div></td><td>${esc(x.msg)}</td><td>${x.status==='new'?'<span class="tag warn">جديد</span>':'<span class="tag ok">اتقرا</span>'}</td><td>${x.status==='new'?`<button class="btn ghost sm" onclick="admInqRead('${x.id}')">تمّت القراءة</button>`:''}</td></tr>`}).join('')}</table></div>`:'<div class="card empty">مفيش استفسارات.</div>';
+ return q.length?`<div class="scroll-x"><table class="tbl"><tr><th>الوقت</th><th>البائع</th><th>الجهاز</th><th>العميل</th><th>الرسالة</th><th>الحالة</th><th></th></tr>${q.map(x=>{const l=byId(x.listing);return `<tr><td>${esc(x.time)}</td><td>${esc(sel(x.seller).name)}</td><td>${l?esc(nm(l)):'—'}</td><td>${esc(x.name)}<div class="mut" dir="ltr" style="font-size:12px;text-align:start">${esc(x.phone)}</div></td><td>${esc(x.msg)}</td><td>${x.status==='new'?'<span class="tag warn">جديد</span>':'<span class="tag ok">اتقرا</span>'}</td><td>${x.status==='new'?`<button class="btn ghost sm" ${dclick('admInqRead',x.id)}>تمّت القراءة</button>`:''}</td></tr>`}).join('')}</table></div>`:'<div class="card empty">مفيش استفسارات.</div>';
 }
 function admInqRead(id){if(!isAdm())return;DB.inquiries.find(q=>q.id===id).status='read';save();route()}
 function admComp(){
  const c=DB.complaints;
- return `<div style="display:grid;gap:10px">${c.map(x=>`<div class="card" style="padding:14px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:220px"><b>ضد: ${esc(sel(x.against).name)}</b> ${x.status==='open'?'<span class="tag warn">مفتوحة</span>':'<span class="tag ok">اتحلّت</span>'}<div>${esc(x.text)}</div></div><button class="btn soft sm" onclick="admCompToggle('${x.id}')">${x.status==='open'?'علّم كمحلولة':'إعادة فتح'}</button></div>`).join('')||'<div class="card empty">مفيش شكاوى.</div>'}</div>`;
+ return `<div style="display:grid;gap:10px">${c.map(x=>`<div class="card" style="padding:14px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:220px"><b>ضد: ${esc(sel(x.against).name)}</b> ${x.status==='open'?'<span class="tag warn">مفتوحة</span>':'<span class="tag ok">اتحلّت</span>'}<div>${esc(x.text)}</div></div><button class="btn soft sm" ${dclick('admCompToggle',x.id)}>${x.status==='open'?'علّم كمحلولة':'إعادة فتح'}</button></div>`).join('')||'<div class="card empty">مفيش شكاوى.</div>'}</div>`;
 }
 function admCompToggle(id){if(!isAdm())return;const c=DB.complaints.find(x=>x.id===id);c.status=c.status==='open'?'resolved':'open';aud(`شكوى ${id}: ${c.status==='open'?'إعادة فتح':'اتحلّت'}`);route()}
 function admUsers(){
- return `<div class="scroll-x"><table class="tbl"><tr><th>الاسم</th><th>الدور</th><th>الموبايل</th><th>الإيميل</th><th>التسجيل</th><th>الحالة</th><th></th></tr>${DB.users.map(u=>`<tr><td><b>${esc(u.name)}</b></td><td>${ROLE_T[u.role]||u.role}</td><td dir="ltr" style="text-align:start">${esc(u.phone||'—')}</td><td dir="ltr" style="text-align:start">${esc(u.email||'—')}</td><td>${esc(u.created||'—')}</td><td>${u.disabled?'<span class="tag" style="background:#fee2e2;color:#b91c1c">معطّل</span>':'<span class="tag ok">نشط</span>'}</td><td>${u.id===(USER&&USER.uid)?'<span class="mut">حسابك</span>':`<button class="btn ${u.disabled?'soft':'danger'} sm" onclick="admUserToggle('${u.id}')">${u.disabled?'تفعيل':'تعطيل'}</button>`}</td></tr>`).join('')}</table></div>`;
+ return `<div class="scroll-x"><table class="tbl"><tr><th>الاسم</th><th>الدور</th><th>الموبايل</th><th>الإيميل</th><th>التسجيل</th><th>الحالة</th><th></th></tr>${DB.users.map(u=>`<tr><td><b>${esc(u.name)}</b></td><td>${esc(ROLE_T[u.role]||u.role)}</td><td dir="ltr" style="text-align:start">${esc(u.phone||'—')}</td><td dir="ltr" style="text-align:start">${esc(u.email||'—')}</td><td>${esc(u.created||'—')}</td><td>${u.disabled?'<span class="tag" style="background:#fee2e2;color:#b91c1c">معطّل</span>':'<span class="tag ok">نشط</span>'}</td><td>${u.id===(USER&&USER.uid)?'<span class="mut">حسابك</span>':`<button class="btn ${u.disabled?'soft':'danger'} sm" ${dclick('admUserToggle',u.id)}>${u.disabled?'تفعيل':'تعطيل'}</button>`}</td></tr>`).join('')}</table></div>`;
 }
 function admUserToggle(id){if(!isAdm())return;const u=DB.users.find(x=>x.id===id);if(!u||id===USER.uid)return;u.disabled=!u.disabled;aud(`${u.disabled?'تعطيل':'تفعيل'} حساب ${u.name}`);route()}
 function admLog(){
@@ -521,16 +543,24 @@ function admSettings(){
  return `<div class="card" style="padding:20px;max-width:520px"><h3 style="margin-bottom:10px">تصدير</h3><p class="mut" style="margin-bottom:10px">ملف CSV بكل الإعلانات (من غير أي صور أو بيانات خاصة).</p><button class="btn ghost" onclick="admCsv()">تنزيل الإعلانات CSV</button></div>`;
 }
 function admCsv(){
- if(!isAdm())return;const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+ if(!isAdm())return;const q=v=>{let t=String(v??'');if(/^[=+\-@\t\r]/.test(t))t="'"+t;return '"'+t.replace(/"/g,'""')+'"'};
  const rows=[['id','device','storage','battery','price','seller','status','level','date'],...DB.listings.map(l=>[l.id,nm(l),l.storage,l.battery,l.price,sel(l.seller).name,l.status,l.level||1,l.date||''])];
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+rows.map(r=>r.map(q).join(',')).join('\n')],{type:'text/csv'}));a.download='dorly-listings.csv';a.click();aud('تصدير الإعلانات CSV');
 }
 function admV(id){if(!isAdm())return;const v=DB.verifs.find(x=>x.id===id),s=sel(v.seller),b=v.kind==='merchant'?'merchant':'identity';if(!s.badges.includes(b))s.badges.push(b);v.status='approved';v.time=TODAY;aud('قبول توثيق '+s.name);toast('اتوثّق '+s.name);route()}
 function admRejectDo(ev,id){ev.preventDefault();if(!isAdm())return;const v=DB.verifs.find(x=>x.id===id);v.status='rejected';v.reason=$('#rj_s').value;aud('رفض توثيق '+sel(v.seller).name+' ('+v.reason+')');closeModal();toast('اترفض الطلب');route()}
 function admTrust(sid){if(!isAdm())return;const s=sel(sid);if(s.badges.includes('trusted'))s.badges=s.badges.filter(b=>b!=='trusted');else{if(!(s.badges.includes('identity')||s.badges.includes('merchant'))){toast('لازم توثيق هوية أو تاجر الأول');return}s.badges.push('trusted')}aud((s.badges.includes('trusted')?'منح':'سحب')+' «موثوق» '+s.name);route()}
-function admApprove(id){if(!isAdm())return;const l=byId(id),ok=$('#adm_ok_'+id);if(isUnpaid(l)){toast('لازم رسوم النشر تتدفع الأول');return}l.status='active';l.reviewed=!!(ok&&ok.checked);if(l.reviewed&&l.level<2)l.level=2;aud(`موافقة ونشر ${nm(l)} (${id})${l.reviewed?' بعد مطابقة اللقطات':''}`);toast('اتنشر الإعلان'+(l.reviewed?' بمستوى «البيانات متراجعة»':' بمستوى «إفصاح البائع»'));route()}
+function admApprove(id){if(!isAdm())return;const l=byId(id),ok=[...document.querySelectorAll('[data-okfor]')].find(x=>x.getAttribute('data-okfor')===id);if(isUnpaid(l)){toast('لازم رسوم النشر تتدفع الأول');return}l.status='active';l.reviewed=!!(ok&&ok.checked);if(l.reviewed&&l.level<2)l.level=2;aud(`موافقة ونشر ${nm(l)} (${id})${l.reviewed?' بعد مطابقة اللقطات':''}`);toast('اتنشر الإعلان'+(l.reviewed?' بمستوى «البيانات متراجعة»':' بمستوى «إفصاح البائع»'));route()}
 function admRejectLDo(ev,id){ev.preventDefault();if(!isAdm())return;const l=byId(id);l.status='rejected';l.reason=$('#rjl_s').value;aud(`رفض إعلان ${nm(l)} (${id}): ${l.reason}`);closeModal();toast('اترفض الإعلان');route()}
 
+
+/* ---- delegated actions (data-click / data-submit) ---- */
+Object.assign(ACT,{
+ admV:id=>admV(id), admRejectV:id=>admRejectV(id), admRejectDo:(id,el,e)=>admRejectDo(e,id),
+ admMarkPaid:id=>admMarkPaid(id), admApprove:id=>admApprove(id), admRejectL:id=>admRejectL(id), admRejectLDo:(id,el,e)=>admRejectLDo(e,id),
+ admEdit:id=>admEdit(id), admEditSave:(id,el,e)=>admEditSave(e,id), admPause:id=>admSetL(id,'paused'), admActivate:id=>admSetL(id,'active'), admDelL:id=>admDelL(id),
+ admTrust:id=>admTrust(id), admSuspend:id=>admSuspend(id), admInqRead:id=>admInqRead(id), admCompToggle:id=>admCompToggle(id), admUserToggle:id=>admUserToggle(id)
+});
 
 /* ---- standalone shell ---- */
 let NOSCROLL=false;
