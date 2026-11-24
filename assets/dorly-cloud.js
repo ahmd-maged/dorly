@@ -70,12 +70,19 @@
   const privOf = s => { const p = s.profile || {}, o = {}; PRIVATE_KEYS.forEach(k => { if (p[k] != null && p[k] !== '') o[k] = p[k]; }); return o; };
 
   /* ---------- photos -> Supabase Storage ---------- */
+  // Files already uploaded in this session, keyed by bucket + target name + content. If a listing save is
+  // rejected and the seller fixes the form and retries, the same photos are reused instead of uploaded again
+  // (no duplicate orphan files). Remaining orphans: see docs/BACKUP_AND_RECOVERY.md.
+  const uploaded = new Map();
   async function upload(bucket, dataUrl, name) {
+    const key = bucket + '|' + name + '|' + dataUrl;
+    if (uploaded.has(key)) return uploaded.get(key);
     const blob = await (await fetch(dataUrl)).blob();
     const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg';
     const path = `${session.user.id}/${name}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
     const { error } = await sb.storage.from(bucket).upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: false });
     if (error) throw error;
+    uploaded.set(key, path);
     return path;
   }
   async function uploadMedia(live, out) {
@@ -180,6 +187,13 @@
   }
 
   /* ---------- write back only what changed ---------- */
+  // A rejected write becomes {coll, id, op, field, message}. `field` is set when the database validation
+  // rejected one field ('dorly: invalid <field>'), so the page can say what to fix and keep the user's input.
+  function failure(coll, id, op, e) {
+    const message = String((e && (e.message || e.error_description)) || e || 'error');
+    const m = message.match(/^dorly: invalid (.+)$/);
+    return { coll, id, op, field: m ? m[1] : null, message };
+  }
   async function doSync(DB) {
     const errs = [];
     for (const c of Object.keys(T)) {
@@ -202,7 +216,7 @@
             } else r = await sb.from(T[c].table).insert(row);
             if (r.error) throw r.error;
             prev.set(live.id, JSON.stringify(serialize(c, live)));
-          } catch (e) { errs.push(c + ':' + (e.message || e)); }
+          } catch (e) { errs.push(failure(c, live.id, prev.has(live.id) ? 'update' : 'insert', e)); }
         }
         if (c === 'listings' && session && prev.has(live.id)) {   // private listing fields (after the listing exists)
           const p = JSON.stringify(lPrivOf(live));
@@ -210,7 +224,7 @@
             const r = lPrivSnap.has(live.id)
               ? await sb.from('dorly_listing_private').update({ data: JSON.parse(p) }).eq('listing_id', live.id).select('listing_id')
               : await sb.from('dorly_listing_private').insert({ listing_id: live.id, data: JSON.parse(p) });
-            if (r.error || (lPrivSnap.has(live.id) && !(r.data || []).length)) errs.push('listing_private'); else lPrivSnap.set(live.id, p);
+            if (r.error || (lPrivSnap.has(live.id) && !(r.data || []).length)) errs.push(failure('listing_private', live.id, 'write', r.error || 'not allowed')); else lPrivSnap.set(live.id, p);
           }
         }
         if (c === 'sellers' && session) {          // private seller fields
@@ -219,29 +233,34 @@
             const r = privSnap.has(live.id)
               ? await sb.from('dorly_seller_private').update({ data: JSON.parse(p) }).eq('seller_id', live.id).select('seller_id')
               : await sb.from('dorly_seller_private').insert({ seller_id: live.id, data: JSON.parse(p) });
-            if (r.error || (privSnap.has(live.id) && !(r.data || []).length)) errs.push('seller_private'); else privSnap.set(live.id, p);
+            if (r.error || (privSnap.has(live.id) && !(r.data || []).length)) errs.push(failure('seller_private', live.id, 'write', r.error || 'not allowed')); else privSnap.set(live.id, p);
           }
         }
       }
       if (c === 'audit') continue;                  // the audit log is append-only
       for (const id of [...prev.keys()]) if (!seen.has(id)) {
         const r = await sb.from(T[c].table).delete().eq('id', id).select('id');
-        if (r.error || !(r.data || []).length) errs.push(c + ':delete'); else prev.delete(id);
+        if (r.error || !(r.data || []).length) errs.push(failure(c, id, 'delete', r.error || 'not allowed')); else prev.delete(id);
       }
     }
     for (const u of DB.users || []) {               // admins can (de)activate accounts
       if (userSnap.has(u.id) && userSnap.get(u.id) !== !!u.disabled) {
         const r = await sb.from('dorly_profiles').update({ disabled: !!u.disabled }).eq('id', u.id).select('id');
-        if (r.error || !(r.data || []).length) errs.push('users'); else userSnap.set(u.id, !!u.disabled);
+        if (r.error || !(r.data || []).length) errs.push(failure('users', u.id, 'update', r.error || 'not allowed')); else userSnap.set(u.id, !!u.disabled);
       }
     }
     if (errs.length) {
       console.warn('Dorly sync errors', errs);
-      if (typeof toast === 'function') toast('ماقدرناش نحفظ التغيير ده — اتأكد إنك داخل بحسابك وجرّب تاني');
-      await reload();
+      // the page may keep the user's input (drafts) and show a precise message; otherwise a generic one
+      let handled = false;
+      try { handled = typeof Cloud.onSyncError === 'function' && !!Cloud.onSyncError(errs); } catch (e) { console.error(e); }
+      if (!handled && typeof toast === 'function') toast('ماقدرناش نحفظ التغيير ده — اتأكد إنك داخل بحسابك وجرّب تاني');
+      await reload();                                   // show what the server really has
     }
+    return errs;
   }
-  function sync(DB) { chain = chain.then(() => doSync(DB)).catch(e => console.error(e)); return chain; }
+  // resolves to the list of rejected writes of this save ([] = everything saved)
+  function sync(DB) { chain = chain.then(() => doSync(DB)).catch(e => { console.error(e); return [failure('sync', null, 'sync', e)]; }); return chain; }
   async function reload() { const db = await load(); if (typeof Cloud.onReload === 'function') Cloud.onReload(db); return db; }
 
   /* ---------- auth ---------- */
@@ -299,6 +318,6 @@
     return data || {};
   }
 
-  const Cloud = { sb, load, sync, reload, user, signIn, signUp, signOut, taken, otp, sellerWhatsapp, listingWhatsapp, onReload: null, disabledNotice: false };
+  const Cloud = { sb, load, sync, reload, user, signIn, signUp, signOut, taken, otp, sellerWhatsapp, listingWhatsapp, onReload: null, onSyncError: null, disabledNotice: false };
   window.Cloud = Cloud;
 })();

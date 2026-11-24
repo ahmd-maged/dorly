@@ -22,7 +22,9 @@ function normPhone(s: string) {
 }
 const okPhone = (s: string) => /^01[0125]\d{8}$/.test(s);
 const okMail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
-const str = (v: unknown, max = 300) => String(v ?? "").trim().slice(0, max);
+// lengths are counted in characters (code points), like the database (an emoji = 1), and never split one
+const len = (v: unknown) => Array.from(String(v ?? "").trim()).length;
+const str = (v: unknown, max = 300) => Array.from(String(v ?? "").trim()).slice(0, max).join("");
 const PUBLIC_KEYS = ["bio", "hours", "activity", "branches", "web", "gov", "area"];
 const PRIVATE_KEYS = ["address", "crNo", "taxNo", "owner", "whatsapp"];  // whatsapp: members only (dorly_seller_whatsapp)
 const DOC_KINDS = ["merchant", "identity"];
@@ -40,8 +42,17 @@ Deno.serve(async (req) => {
   const password = String(b.password ?? "");
   if (!["customer", "individual", "merchant"].includes(role)) return json({ error: "role" }, 400);
   if (name.split(/\s+/).length < 2) return json({ error: "name" }, 400);
+  if (len(b.name) > 80) return json({ error: "name" }, 400);
   if (!okPhone(phone)) return json({ error: "phone" }, 400);
   if (email && !okMail(email)) return json({ error: "email" }, 400);
+  // same limits as the pages and the database validation (nothing is shortened silently)
+  const sIn = b.seller || {}, pIn = sIn.profile || {};
+  if (role !== "customer") {
+    if (len(sIn.name) > 80) return json({ error: "seller_name" }, 400);
+    const web0 = String(pIn.web ?? "").trim();
+    if (web0 && !(/^https?:\/\/[^\s"<>]+$/i.test(web0) && len(web0) <= 300)) return json({ error: "web" }, 400);
+    for (const k of [...PUBLIC_KEYS, ...PRIVATE_KEYS]) if (len(pIn[k]) > 300) return json({ error: "too_long" }, 400);
+  }
   if (password.length < 8 || password.length > 72 || !/\d/.test(password) || !/[A-Za-z؀-ۿ]/.test(password)) return json({ error: "password" }, 400);
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
@@ -61,7 +72,7 @@ Deno.serve(async (req) => {
       sellerId = "S" + Date.now() + Math.random().toString(36).slice(2, 6);
       const pub: Record<string, string | boolean> = {};
       for (const k of PUBLIC_KEYS) pub[k] = str(p[k]);
-      if (pub.web && !/^https?:\/\//i.test(pub.web as string)) pub.web = "";
+      // (links were checked above; the pages add https:// when it is missing)
       const priv: Record<string, string> = {};
       for (const k of PRIVATE_KEYS) priv[k] = str(p[k]);
       priv.whatsapp = okPhone(normPhone(priv.whatsapp)) ? normPhone(priv.whatsapp) : "";
@@ -77,7 +88,7 @@ Deno.serve(async (req) => {
       for (const v of verifs) {
         if (!DOC_KINDS.includes(v?.kind)) continue;
         const id = "V" + Date.now() + String(v.kind)[0] + Math.random().toString(36).slice(2, 5);
-        const docs = (Array.isArray(v.docs) ? v.docs.slice(0, 6) : []).map((d: any) => ({ label: str(d?.label, 60), name: str(d?.name, 120) }));
+        const docs = (Array.isArray(v.docs) ? v.docs.slice(0, 6) : []).map((d: any) => ({ label: str(d?.label, 200), name: str(d?.name, 255) }));
         r = await admin.from("dorly_verifs").insert({ id, seller_id: sellerId, status: "pending", data: { id, seller: sellerId, kind: v.kind, docs, status: "pending", reason: "", time: str(b.today, 40), sample: false } });
         if (r.error) throw r.error;
       }

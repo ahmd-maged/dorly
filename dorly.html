@@ -371,7 +371,39 @@ let DB={sellers:[],listings:[],inquiries:[],complaints:[],verifs:[],users:[],aud
 let DEMO=false; /* sample listings are hidden on the public site */
 let USER=null;
 const save=()=>Cloud.sync(DB);
-Cloud.onReload=db=>{DB=db;setSession();NOSCROLL=true;route()};
+/* ---- limits shared with the database rules (supabase/proposed/phase1_input_validation.sql) ----
+   The forms check these before saving and say what is too long; nothing is cut off silently. */
+const LIM={name:80,sellerName:80,area:100,hours:100,branches:300,bio:300,web:300,address:300,crNo:50,taxNo:50,note:500,docName:255,inqName:80,inqPhone:30,inqMsg:2000};
+const cpLen=v=>Array.from(String(v==null?'':v)).length;   // characters as the database counts them (an emoji = 1)
+const tooLong=(v,n)=>cpLen(v)>n;
+const lenMsg=(label,n)=>`${label} أطول من ${n} حرف — اختصرها شوية`;
+// "facebook.com/x" -> "https://facebook.com/x"; spaces, quotes and <> are not allowed in a link
+function normWeb(v){v=String(v||'').trim();if(!v)return {v:''};if(!/^https?:\/\//i.test(v))v='https://'+v.replace(/^\/+/,'');
+ return /^https?:\/\/[^\s"<>]+$/.test(v)&&v.length<=LIM.web?{v}:{v,err:'اللينك مش صحيح — اكتبه من غير مسافات (مثلاً facebook.com/اسم-الصفحة)'}}
+const FIELD_AR={parts:'تفاصيل القطع المتغيرة',defects:'وصف العيوب',docs:'أسماء ملفات المستندات','profile.web':'لينك الصفحة',profile:'بيانات الملف',name:'الاسم',city:'المنطقة',msg:'الرسالة',phone:'رقم الموبايل',values:'البيانات الخاصة',storage:'السعة',gen:'الموديل',variant:'الفئة',price:'السعر',battery:'البطارية',color:'اللون',cond:'الحالة',warranty:'الضمان',network:'الشبكة',acc:'المشتملات',pubPhotos:'الصور',photos:'الصور',shots:'لقطات الإعدادات',kind:'نوع التوثيق'};
+const syncMsg=e=>e&&e.field?`ماقدرناش نحفظ — «${FIELD_AR[e.field]||e.field}» فيها بيانات مش مقبولة. بياناتك لسه موجودة: عدّلها وجرّب تاني.`:'ماقدرناش نحفظ — بياناتك لسه موجودة، جرّب تاني بعد شوية.';
+// field rejected by the database -> publish-form step to reopen
+const PUB_FIELD_STEP={gen:0,variant:0,storage:0,battery:0,cond:0,color:0,parts:0,defects:0,acc:1,warranty:1,network:1,flags:1,pubPhotos:2,photos:2,shots:3,price:4,values:4,form:4};
+// what the user typed, kept until the server confirms the save (cleared on success, restored on rejection)
+let AFTER_RELOAD=null,LASTPUB=null,PROFILE_DRAFT=null,VERIF_DRAFT=null,INQ_DRAFT=null;
+Cloud.onSyncError=errs=>{
+ const hit=(colls,id)=>id&&errs.find(e=>colls.includes(e.coll)&&e.id===id);let e,D;
+ if(LASTPUB&&(e=hit(['listings','listing_private'],LASTPUB.id))){
+  D=LASTPUB;LASTPUB=null;PUB=D.pub;PUB.retryId=D.pub.replace?null:D.id;PUBDONE=null;if(e.field in PUB_FIELD_STEP)PUB.step=PUB_FIELD_STEP[e.field];
+  const m=syncMsg(e);AFTER_RELOAD=()=>{if(location.hash==='#/publish')showErr([m]);else toast(m)};return true}
+ if(PROFILE_DRAFT&&(e=hit(['sellers','seller_private'],PROFILE_DRAFT.id)||hit(['verifs'],PROFILE_DRAFT.verifId))){
+  D=PROFILE_DRAFT;PROFILE_DRAFT=null;DT='profile';const m=syncMsg(e);
+  AFTER_RELOAD=()=>{if(location.hash.startsWith('#/dashboard'))for(const k in D.v){const el=$('#'+k);if(el)el.value=D.v[k]}toast(m)};return true}
+ if(VERIF_DRAFT&&(e=hit(['verifs'],VERIF_DRAFT.id))){
+  D=VERIF_DRAFT;VERIF_DRAFT=null;Object.assign(VF,D.files);DT='verify';const m=syncMsg(e);
+  AFTER_RELOAD=()=>{if($('#v_cr')&&D.cr!=null)$('#v_cr').value=D.cr;if($('#v_tax')&&D.tax!=null)$('#v_tax').value=D.tax;toast(m)};return true}
+ if(INQ_DRAFT&&(e=hit(['inquiries'],INQ_DRAFT.id))){
+  D=INQ_DRAFT;INQ_DRAFT=null;const m=syncMsg(e);
+  AFTER_RELOAD=()=>{if(!byId(D.listing))return toast(m);contact(D.listing,D.kind);$('#q_n').value=D.name;$('#q_p').value=D.phone;$('#q_m').value=D.msg;toast(m)};return true}
+ e=errs.find(x=>x.field);if(e){toast(syncMsg(e));return true}
+ return false;
+};
+Cloud.onReload=db=>{DB=db;setSession();NOSCROLL=true;route();if(AFTER_RELOAD){const f=AFTER_RELOAD;AFTER_RELOAD=null;f()}};
 const USERS={customer:{name:'عميل تجريبي',role:'customer'},individual:{name:'حسابك (فرد)',role:'individual',sellerId:'u_ind'},merchant:{name:'تك زون',role:'merchant',sellerId:'m1'},admin:{name:'مدير المنصة',role:'admin'}};
 const ROLE_T={customer:'عميل',individual:'فرد بائع',merchant:'تاجر',admin:'أدمن'};
 
@@ -923,7 +955,7 @@ function viewSeller(id){
  ${ls.length?`<div class="grid">${ls.map(l=>card(l)).join('')}</div>`:'<div class="card empty">مفيش أجهزة معروضة دلوقتي.</div>'}</div>`;
 }
 function gate(t,m){$('#app').innerHTML=`<div class="wrap page"><div class="card empty"><div class="ico-b">${I('lock',24)}</div><h3>${t}</h3><p>${m}</p><br><button class="btn primary" onclick="openLogin({})">دخول / تسجيل</button></div></div>`}
-function dashPrice(id,v){const l=byId(id);v=+v;if(!(v>0)){toast('اكتب سعر صحيح');route();return}l.price=v;save();toast('اتحدّث السعر')}
+function dashPrice(id,v){const l=byId(id);v=+v;if(!(v>0)||!Number.isInteger(v)||v>1e8){toast('اكتب سعر صحيح بالجنيه (من غير كسور)');route();return}l.price=v;save();toast('اتحدّث السعر')}
 function dashStatus(id,v){byId(id).status=v;save();toast('اتحدّثت الحالة');route()}
 function dashDel(id){if(!confirm('تحذف الإعلان ده؟'))return;DB.listings=DB.listings.filter(l=>l.id!==id);save();route()}
 function inqRead(id){DB.inquiries.find(q=>q.id===id).status='read';save();route()}
@@ -948,12 +980,14 @@ function contact(id,kind){
  const l=byId(id),s=sel(l.seller);
  openModal(`<h2>تواصل مع ${esc(s.name)}</h2><p class="mut" style="margin-bottom:10px">${esc(nm(l))} · ${esc(l.storage)} · ${fmt(l.price)} جنيه</p>
  <form class="form" ${dsubmit('sendInq',id)}><label>اسمك<input id="q_n" required value="${USER?esc(USER.name):''}"></label><label>رقم موبايلك (بيوصل للبائع بس)<input id="q_p" required inputmode="tel" placeholder="01XXXXXXXXX" value="${USER&&USER.phone?esc(USER.phone):''}"></label>
- <label>رسالتك<textarea id="q_m" rows="3">${kind==='trade'?'السلام عليكم، عايز أبدّل جهازي بالجهاز ده. ينفع نتفق على الفرق؟':'السلام عليكم، الجهاز لسه متاح؟'}</textarea></label>
+ <label>رسالتك<textarea id="q_m" rows="3" data-kind="${kind==='trade'?'trade':''}">${kind==='trade'?'السلام عليكم، عايز أبدّل جهازي بالجهاز ده. ينفع نتفق على الفرق؟':'السلام عليكم، الجهاز لسه متاح؟'}</textarea></label>
  <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" style="flex:1">إرسال</button>${listingWa(l)?`<button type="button" class="btn wa" style="flex:1" ${dclick('waSeller',id)}>${WA_SVG} كلّمه واتساب</button>`:''}<button type="button" class="btn ghost" onclick="closeModal()">إلغاء</button></div>${listingWa(l)?'':'<p class="mut" style="font-size:13px;margin-top:6px">البائع ده مضافش رقم واتساب — ابعتله رسالة من هنا وهيرد عليك.</p>'}</form>`);
 }
-function sendInq(ev,id){ev.preventDefault();const l=byId(id);
- DB.inquiries.unshift({id:'Q'+Date.now(),seller:l.seller,listing:id,name:$('#q_n').value,phone:$('#q_p').value,msg:$('#q_m').value,time:'دلوقتي',status:'new',sample:false});
- save();closeModal();toast('اتبعت استفسارك للبائع ✅')}
+function sendInq(ev,id,kind){ev.preventDefault();const l=byId(id),q={id:'Q'+Date.now(),seller:l.seller,listing:id,name:$('#q_n').value,phone:$('#q_p').value,msg:$('#q_m').value,time:'دلوقتي',status:'new',sample:false};
+ const bad=[[q.name,LIM.inqName,'الاسم'],[q.phone,LIM.inqPhone,'رقم الموبايل'],[q.msg,LIM.inqMsg,'الرسالة']].find(x=>tooLong(x[0],x[1]));
+ if(bad){toast(lenMsg(bad[2],bad[1]));return}
+ const draft=INQ_DRAFT={id:q.id,listing:id,kind:$('#q_m').dataset.kind||'',name:q.name,phone:q.phone,msg:q.msg};
+ DB.inquiries.unshift(q);save().then(()=>{if(INQ_DRAFT===draft){INQ_DRAFT=null;toast('اتبعت استفسارك للبائع ✅')}});closeModal()}
 
 /* =========================================================
    Accounts & auth  (prototype: stored in localStorage.
@@ -1138,9 +1172,12 @@ function validate(st){
   if(!d.terms)e.push('لازم توافق على الشروط وسياسة الخصوصية');
  }
  if(st==='identity'&&[f.idf,f.idb,f.selfie].some(Boolean)&&![f.idf,f.idb,f.selfie].every(Boolean))e.push('كمّل رفع الوش والضهر والسيلفي، أو سيبهم كلهم لبعدين');
- if(st==='business'){need('bizName','اكتب اسم النشاط التجاري');need('activity','اختار نوع النشاط');need('gov','اختار المحافظة');need('area','اكتب المنطقة');need('address','اكتب عنوان المحل بالتفصيل (للتحقق فقط)');if(d.branches&&+d.branches<1)e.push('عدد الفروع لازم يكون 1 على الأقل');if(d.web&&!/^https?:\/\//i.test(d.web))e.push('اللينك لازم يبدأ بـ https://')}
+ if(st==='business'){need('bizName','اكتب اسم النشاط التجاري');need('activity','اختار نوع النشاط');need('gov','اختار المحافظة');need('area','اكتب المنطقة');need('address','اكتب عنوان المحل بالتفصيل (للتحقق فقط)');if(d.branches&&+d.branches<1)e.push('عدد الفروع لازم يكون 1 على الأقل');if(d.web){const w=normWeb(d.web);if(w.err)e.push(w.err);else d.web=w.v}}
  if(st==='docs'){const any=[f.cr,f.tax,f.shop].some(Boolean);if(any&&(!(f.cr&&f.tax&&f.shop)||!String(d.crNo||'').trim()||!String(d.taxNo||'').trim()))e.push('عشان طلب «تاجر موثّق» لازم السجل والبطاقة الضريبية وصورة المحل وأرقامهم، أو سيبهم كلهم لبعدين');if([f.idf,f.idb].some(Boolean)&&!(f.idf&&f.idb))e.push('ارفع وش وضهر بطاقة المالك مع بعض')}
- if(st==='profile'){if(r==='individual'){need('display','اكتب الاسم اللي هيظهر للمشترين');need('gov','اختار المحافظة')}if(d.bio&&d.bio.length>300)e.push('النبذة أطول من 300 حرف');if(d.whatsapp&&!okPhone(d.whatsapp))e.push('رقم الواتساب مش مظبوط')}
+ [['name',LIM.name,'الاسم'],['bizName',LIM.sellerName,'اسم النشاط'],['display',LIM.sellerName,'الاسم المعروض'],['area',LIM.area,'المنطقة'],['address',LIM.address,'العنوان'],['hours',LIM.hours,'مواعيد العمل'],['branches',LIM.branches,'الفروع'],['crNo',LIM.crNo,'رقم السجل التجاري'],['taxNo',LIM.taxNo,'رقم البطاقة الضريبية']]
+  .forEach(([k,n,t])=>{if(tooLong(String(d[k]||'').trim(),n))e.push(lenMsg(t,n))});
+ if(Object.values(f||{}).some(x=>tooLong(x,LIM.docName)))e.push(`اسم ملف أطول من ${LIM.docName} حرف — غيّر اسم الملف واختاره تاني`);
+ if(st==='profile'){if(r==='individual'){need('display','اكتب الاسم اللي هيظهر للمشترين');need('gov','اختار المحافظة')}if(tooLong(d.bio,LIM.bio))e.push('النبذة أطول من 300 حرف');if(d.whatsapp&&!okPhone(d.whatsapp))e.push('رقم الواتساب مش مظبوط')}
  return e;
 }
 async function sendOtp(){const r=await Cloud.otp({action:'send',email:(REG.d.email||'').trim().toLowerCase(),purpose:'signup'});if(r.error)return otpMsg(r.error);REG.otp={sent:Date.now()};REG.otpToken=null}
@@ -1178,7 +1215,7 @@ async function finalizeReg(){
   seller:role==='customer'?null:{name:role==='merchant'?d.bizName.trim():(d.display||autoDisplay(d.name)).trim(),profile:P},verifs});
  REG.busy=false;
  if(r.error==='otp'){REG.phoneOk=false;return 'انتهت صلاحية تأكيد الرقم. ارجع لأول خطوة واطلب كود جديد.'}
- if(r.error)return r.error==='taken_phone'?'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول':r.error==='taken_email'?'الإيميل ده مسجّل قبل كده':'حصلت مشكلة في إنشاء الحساب. جرّب تاني بعد شوية.';
+ if(r.error)return r.error==='taken_phone'?'الرقم ده مسجّل قبل كده — جرّب تسجّل دخول':r.error==='taken_email'?'الإيميل ده مسجّل قبل كده':r.error==='web'?'لينك الصفحة مش صحيح — ارجع لخطوة بيانات النشاط وعدّله':r.error==='seller_name'||r.error==='too_long'?'فيه خانة أطول من المسموح — ارجع للخطوات اللي فاتت واختصرها':'حصلت مشكلة في إنشاء الحساب. جرّب تاني بعد شوية.';
  DB=r.db;setSession();REG.created={id:USER.uid,name:d.name.trim(),role,sellerId:USER.sellerId};
 }
 function regDone(){
@@ -1217,8 +1254,14 @@ function vcard(k,s){
 function submitVerif(k){
  const s=sel(USER.sellerId),need=needDocs(k,s);
  if(need.some(x=>!VF[x])){toast('ارفع كل المستندات المطلوبة الأول');return}
- if(k==='merchant'){const a=$('#v_cr').value.trim(),b=$('#v_tax').value.trim();if(!a||!b){toast('اكتب رقم السجل التجاري والبطاقة الضريبية');return}s.profile=s.profile||{};s.profile.crNo=a;s.profile.taxNo=b}
- DB.verifs.push(mkV(s.id,k,need.map(x=>[DOC_L[x],VF[x]])));need.forEach(x=>delete VF[x]);save();toast('اتبعت للمراجعة ✅');route();
+ if(need.some(x=>tooLong(VF[x],LIM.docName))){toast(`اسم ملف أطول من ${LIM.docName} حرف — غيّر اسم الملف واختاره تاني`);return}
+ let cr=null,tax=null;
+ if(k==='merchant'){cr=$('#v_cr').value.trim();tax=$('#v_tax').value.trim();if(!cr||!tax){toast('اكتب رقم السجل التجاري والبطاقة الضريبية');return}
+  if(tooLong(cr,LIM.crNo)||tooLong(tax,LIM.taxNo)){toast(lenMsg('رقم السجل أو البطاقة الضريبية',LIM.crNo));return}
+  s.profile=s.profile||{};s.profile.crNo=cr;s.profile.taxNo=tax}
+ const v=mkV(s.id,k,need.map(x=>[DOC_L[x],VF[x]])),files={};need.forEach(x=>files[x]=VF[x]);
+ const draft=VERIF_DRAFT={id:v.id,files,cr,tax};
+ DB.verifs.push(v);need.forEach(x=>delete VF[x]);save().then(()=>{if(VERIF_DRAFT===draft){VERIF_DRAFT=null;toast('اتبعت للمراجعة ✅')}});route();
 }
 function verifyTab(s){
  const mer=s.type==='merchant';
@@ -1240,17 +1283,22 @@ function profileTab(s){
 function saveProfile(ev){
  ev.preventDefault();const s=sel(USER.sellerId),v=id=>($('#'+id)||{value:''}).value.trim();s.profile=s.profile||{};const P=s.profile,nn=v('p_name');
  if(!nn){toast('الاسم مطلوب');return}
+ const w=normWeb(v('p_web')),bad=[[nn,LIM.sellerName,'الاسم'],[v('p_hours'),LIM.hours,'مواعيد العمل'],[v('p_area'),LIM.area,'المنطقة'],[v('p_addr'),LIM.address,'العنوان'],[v('p_bio'),LIM.bio,'النبذة']].find(x=>tooLong(x[0],x[1]));
+ if(bad){toast(lenMsg(bad[2],bad[1]));return}
+ if(w.err){toast(w.err);return}
+ if($('#p_web'))$('#p_web').value=w.v;
+ const draft=PROFILE_DRAFT={id:s.id,verifId:null,v:{}};['p_name','p_act','p_hours','p_gov','p_area','p_addr','p_wa','p_web','p_bio'].forEach(k=>{if($('#'+k))draft.v[k]=$('#'+k).value});
  if(s.type==='merchant'){
   if(v('p_wa')&&!okPhone(v('p_wa'))){toast('رقم الواتساب مش مظبوط');return}
   if(nn!==s.name&&s.badges.includes('merchant')){
    if(!confirm('تغيير اسم النشاط هيلغي شارة «تاجر موثّق» لحد ما نراجع التغيير. تكمّل؟'))return;
-   s.badges=s.badges.filter(b=>b!=='merchant');DB.verifs.push(mkV(s.id,'merchant',[['مراجعة تغيير اسم النشاط إلى: '+nn,'—']]));
+   s.badges=s.badges.filter(b=>b!=='merchant');const rv=mkV(s.id,'merchant',[['مراجعة تغيير اسم النشاط إلى: '+nn,'—']]);draft.verifId=rv.id;DB.verifs.push(rv);
   }
-  P.activity=v('p_act');P.hours=v('p_hours');P.address=v('p_addr');P.whatsapp=v('p_wa')?normPhone(v('p_wa')):'';P.web=v('p_web');
+  P.activity=v('p_act');P.hours=v('p_hours');P.address=v('p_addr');P.whatsapp=v('p_wa')?normPhone(v('p_wa')):'';P.web=w.v;
  }
  else{if(v('p_wa')&&!okPhone(v('p_wa'))){toast('رقم الواتساب مش مظبوط');return}P.whatsapp=v('p_wa')?normPhone(v('p_wa')):''}
  s.name=nn;P.bio=v('p_bio');P.gov=v('p_gov');P.area=v('p_area');s.city=(P.area?P.area+' – ':'')+P.gov||s.city;
- save();USER.name=s.name;renderHeader();toast('اتحفظ الملف');route();
+ save().then(()=>{if(PROFILE_DRAFT===draft){PROFILE_DRAFT=null;toast('اتحفظ الملف')}});USER.name=s.name;renderHeader();route();
 }
 function devTab(mine,mer,stl){
  return mine.length?`<div class="scroll-x"><table class="tbl"><tr><th>الجهاز</th><th>السعة</th><th>البطارية</th><th>السعر (جنيه)</th><th>الحالة</th><th>التحقق</th><th></th></tr>${mine.map(l=>`<tr><td><a href="${esc(devHash(l.id))}"><b>${esc(nm(l))}</b></a></td><td>${esc(l.storage)}</td><td>${esc(l.battery)}%</td><td><input type="number" value="${esc(l.price)}" min="0" ${dchange('dashPrice',l.id)}></td><td>${l.status==='pending'?(isUnpaid(l)?`<span class="tag warn">مستني الدفع</span><div><button class="btn primary sm" style="margin-top:4px" ${dclick('startPayment',l.id)}>ادفع ${fmt(l.pay.amount)} جنيه</button></div>`:`<span class="tag warn">قيد المراجعة</span>`):l.status==='rejected'?`<span class="tag rej">اترفض</span><div class="hnt">${esc(l.reason||'')}</div><button class="btn soft sm" ${dclick('republish',l.id)}>عدّل وأعد الإرسال</button>`:`<select ${dchange('dashStatus',l.id)}>${['active','paused','sold'].map(v=>`<option value="${v}" ${l.status===v?'selected':''}>${stl[v]}</option>`).join('')}</select>`}</td><td>${vtag(l)}</td><td><button class="icbtn" title="حذف" ${dclick('dashDel',l.id)}>${I('trash',16)}</button></td></tr>`).join('')}</table></div>${mer?'':`<div class="callout">حساب الفرد بيعرض جهاز واحد في المرة. علّم إعلانك "اتباع" عشان تضيف جهاز جديد.</div>`}`
@@ -1366,6 +1414,8 @@ function pubValidate(st){
   const b=+d.battery;if(!d.battery||!(b>=40&&b<=100))e.push('اكتب صحة البطارية بالظبط (رقم من 40 لـ 100) زي ما ظاهرة في الإعدادات');
   if(d.parts!=='none'&&!String(d.partsNote).trim())e.push('اكتب تفاصيل القطع اللي اتغيرت (إيه اللي اتغير ومتى وفين)');
   if(d.defects!=='none'&&!String(d.defectsNote).trim())e.push('اوصف العيوب أو الخدوش بالتفصيل');
+  if(tooLong(d.partsNote,LIM.note))e.push(lenMsg('تفاصيل القطع',LIM.note)+` (دلوقتي ${cpLen(d.partsNote)})`);
+  if(tooLong(d.defectsNote,LIM.note))e.push(lenMsg('وصف العيوب',LIM.note)+` (دلوقتي ${cpLen(d.defectsNote)})`);
  }
  if(st==='extras'){
   if(!d.network)e.push('اختار حالة الشبكة (فاكتوري أو مقفول)');
@@ -1449,10 +1499,11 @@ function pubPublish(){
  const d=PUB.d;d.whatsapp=normPhone(d.whatsapp||'');
  const old=PUB.replace?byId(PUB.replace):null;
  if(PUB.replace)DB.listings=DB.listings.filter(l=>l.id!==PUB.replace);
- const l={id:old?old.id:'L'+Date.now(),wa:true,pay:old&&old.pay?old.pay:{amount:LISTING_FEE,currency:'EGP',status:'unpaid'},gen:/^\d+$/.test(d.gen)?+d.gen:d.gen,variant:d.variant,storage:d.storage,battery:+d.battery,cond:d.cond,price:+d.price,seller:USER.sellerId,level:1,color:d.color,status:'pending',sample:false,insp:null,
+ const l={id:old?old.id:(PUB.retryId||'L'+Date.now()),wa:true,pay:old&&old.pay?old.pay:{amount:LISTING_FEE,currency:'EGP',status:'unpaid'},gen:/^\d+$/.test(d.gen)?+d.gen:d.gen,variant:d.variant,storage:d.storage,battery:+d.battery,cond:d.cond,price:+d.price,seller:USER.sellerId,level:1,color:d.color,status:'pending',sample:false,insp:null,
   parts:partsTxt(d),defects:defTxt(d),acc:d.acc.slice(),warranty:WAR_T[d.warranty]+(d.warranty==='shop'?' ('+d.wMonths+' شهر)':''),network:NET_T[d.network],icloud:true,nego:!!d.nego,date:'نوفمبر 2026',
   form:Object.assign({},d,{acc:d.acc.slice()}),pubPhotos:Object.assign({},PUB.photos),shots:Object.assign({},PUB.shots)};
- DB.listings.unshift(l);save();PUBDONE={l,again:!!d.again};PUB=null;
+ const draft=LASTPUB={id:l.id,pub:JSON.parse(JSON.stringify(PUB))};
+ DB.listings.unshift(l);save().then(()=>{if(LASTPUB===draft)LASTPUB=null});PUBDONE={l,again:!!d.again};PUB=null;
  if(PUBDONE.again){toast('اتبعت للمراجعة ✅ — ابدأ الجهاز التالي');PUB=newPub();PUBDONE=null;renderPublish();window.scrollTo(0,0);return}
  renderPubDone();window.scrollTo(0,0);
 }
