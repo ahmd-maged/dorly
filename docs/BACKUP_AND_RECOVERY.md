@@ -66,15 +66,22 @@ Compare `backup/schema.sql` with the migrations in Git; any difference is drift 
 
 `supabase/proposed/restore_from_backup.sql` — **do not run without approval.**
 - Re-inserts only rows that are missing; never overwrites or deletes existing rows.
+- **Full vs selective.** With the `dorly_restore_only` list left empty it restores *every* missing row —
+  including rows that were deliberately deleted after the snapshot (a seller's own deletions, moderation,
+  a user's request to remove their data). To bring back only specific rows, add one line per row to
+  `dorly_restore_only` (table + key) at the marked place in the script.
 - Disables the guard/validation triggers during the copy so restored values (status, owner, payment,
-  badges) are kept as they were, and re-enables them before commit.
+  badges) are kept as they were, and re-enables them before commit. Other writes to these tables wait
+  for the restore transaction meanwhile.
 - Order follows the foreign keys: profiles → sellers → seller_private → listings → listing_private →
   inquiries → complaints → verifs → audit.
-- Ends with a check that every backed-up row exists again; otherwise everything rolls back.
-- Tested locally: after deleting all rows of all nine tables, the restore made every table
-  byte-identical to the state before deletion (see the Phase 1 report).
-- Limitation: profiles reference `auth.users`. A profile whose login no longer exists cannot be restored
-  until the login is restored from a full backup (§3).
+- Ends with a check that every row that was to be restored exists again; otherwise everything rolls back.
+- **Logins are not in the backup.** `profiles.id` and the `owner` column of sellers, seller_private,
+  listings and listing_private reference `auth.users`. A row whose login no longer exists makes the
+  restore fail (and roll back) until that login is restored from a full backup (§3), or the row is left
+  out with a selective restore.
+- Tested locally: full restore after deleting every row of all nine tables (byte-identical result),
+  selective restore of chosen rows only, and the failure + rollback when an owner login is missing.
 
 ## 6. Orphaned uploads
 
@@ -100,7 +107,9 @@ manually a few times.
 2. Re-run `phase1_check_existing_rows.readonly.sql`; expect zero rows with a non-null `problem`.
 3. Take the snapshot (`phase0_backup_snapshot.sql`); every `ok` must be true.
 4. Optional full backup: download Storage contents (§2) and a schema dump (§3).
-5. Apply `phase0_restrict_complaints.sql`, then `phase1_input_validation.sql`.
+5. Apply `phase0_restrict_complaints.sql`, then `phase1_input_validation.sql`. The validation only accepts
+   media from one Supabase project (production by default); for a staging database regenerate it with
+   `python3 tools/gen_validation_sql.py --project-ref=<staging ref>`.
 6. Rollback scripts are in `supabase/proposed/rollback/`.
 7. The updated sign-up Edge Function (`supabase/functions/dorly-signup`) is optional: the deployed
    version stays compatible (it shortens document names to 120 characters, within the new limit of 255).

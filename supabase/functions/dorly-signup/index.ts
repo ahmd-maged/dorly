@@ -3,6 +3,7 @@
 // Deployed with verify_jwt = false (anonymous visitors sign up); all input is validated here.
 // No phone/e-mail verification for now (no SMS or e-mail service connected); dorly-otp can be re-enabled later.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { checkSignup } from "./rules.ts";   // all input rules (also unit-tested locally)
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -12,48 +13,15 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-const toEn = (s: string) => String(s).replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 1632)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 1776));
-function normPhone(s: string) {
-  s = toEn(s || "").replace(/[\s\-()]/g, "");
-  if (s.startsWith("+20")) s = "0" + s.slice(3);
-  else if (s.startsWith("0020")) s = "0" + s.slice(4);
-  else if (/^20\d{10}$/.test(s)) s = "0" + s.slice(2);
-  return s;
-}
-const okPhone = (s: string) => /^01[0125]\d{8}$/.test(s);
-const okMail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
-// lengths are counted in characters (code points), like the database (an emoji = 1), and never split one
-const len = (v: unknown) => Array.from(String(v ?? "").trim()).length;
-const str = (v: unknown, max = 300) => Array.from(String(v ?? "").trim()).slice(0, max).join("");
-const PUBLIC_KEYS = ["bio", "hours", "activity", "branches", "web", "gov", "area"];
-const PRIVATE_KEYS = ["address", "crNo", "taxNo", "owner", "whatsapp"];  // whatsapp: members only (dorly_seller_whatsapp)
-const DOC_KINDS = ["merchant", "identity"];
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "method" }, 405);
   let b: any;
   try { b = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
 
-  const role = str(b.role, 20);
-  const name = str(b.name, 80);
-  const phone = normPhone(str(b.phone, 30));
-  const email = str(b.email, 120).toLowerCase();
-  const password = String(b.password ?? "");
-  if (!["customer", "individual", "merchant"].includes(role)) return json({ error: "role" }, 400);
-  if (name.split(/\s+/).length < 2) return json({ error: "name" }, 400);
-  if (len(b.name) > 80) return json({ error: "name" }, 400);
-  if (!okPhone(phone)) return json({ error: "phone" }, 400);
-  if (email && !okMail(email)) return json({ error: "email" }, 400);
-  // same limits as the pages and the database validation (nothing is shortened silently)
-  const sIn = b.seller || {}, pIn = sIn.profile || {};
-  if (role !== "customer") {
-    if (len(sIn.name) > 80) return json({ error: "seller_name" }, 400);
-    const web0 = String(pIn.web ?? "").trim();
-    if (web0 && !(/^https?:\/\/[^\s"<>]+$/i.test(web0) && len(web0) <= 300)) return json({ error: "web" }, 400);
-    for (const k of [...PUBLIC_KEYS, ...PRIVATE_KEYS]) if (len(pIn[k]) > 300) return json({ error: "too_long" }, 400);
-  }
-  if (password.length < 8 || password.length > 72 || !/\d/.test(password) || !/[A-Za-z؀-ۿ]/.test(password)) return json({ error: "password" }, 400);
+  const plan = checkSignup(b);
+  if ("error" in plan) return json({ error: plan.error }, 400);
+  const { role, name, phone, email, password } = plan;
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
   const { data: taken } = await admin.rpc("dorly_taken", { p_phone: phone, p_email: email });
@@ -66,34 +34,21 @@ Deno.serve(async (req) => {
 
   try {
     let sellerId: string | null = null;
-    if (role !== "customer") {
-      const s = b.seller || {};
-      const p = s.profile || {};
+    if (plan.seller) {
       sellerId = "S" + Date.now() + Math.random().toString(36).slice(2, 6);
-      const pub: Record<string, string | boolean> = {};
-      for (const k of PUBLIC_KEYS) pub[k] = str(p[k]);
-      // (links were checked above; the pages add https:// when it is missing)
-      const priv: Record<string, string> = {};
-      for (const k of PRIVATE_KEYS) priv[k] = str(p[k]);
-      priv.whatsapp = okPhone(normPhone(priv.whatsapp)) ? normPhone(priv.whatsapp) : "";
-      pub.wa = !!priv.whatsapp;  // public flag only, the number itself stays private
-      const sName = str(s.name, 80) || name;
-      const city = (pub.area ? pub.area + " – " : "") + pub.gov;
-      const seller = { id: sellerId, name: sName, type: role, city, badges: [], since: String(new Date().getFullYear()), profile: pub };
+      const { pub, priv, city } = plan.seller;
+      const seller = { id: sellerId, name: plan.seller.name, type: role, city, badges: [], since: String(new Date().getFullYear()), profile: pub };
       let r = await admin.from("dorly_sellers").insert({ id: sellerId, owner: uid, sample: false, data: seller });
       if (r.error) throw r.error;
       r = await admin.from("dorly_seller_private").insert({ seller_id: sellerId, owner: uid, data: priv });
       if (r.error) throw r.error;
-      const verifs = Array.isArray(b.verifs) ? b.verifs.slice(0, 2) : [];
-      for (const v of verifs) {
-        if (!DOC_KINDS.includes(v?.kind)) continue;
+      for (const v of plan.verifs) {
         const id = "V" + Date.now() + String(v.kind)[0] + Math.random().toString(36).slice(2, 5);
-        const docs = (Array.isArray(v.docs) ? v.docs.slice(0, 6) : []).map((d: any) => ({ label: str(d?.label, 200), name: str(d?.name, 255) }));
-        r = await admin.from("dorly_verifs").insert({ id, seller_id: sellerId, status: "pending", data: { id, seller: sellerId, kind: v.kind, docs, status: "pending", reason: "", time: str(b.today, 40), sample: false } });
+        r = await admin.from("dorly_verifs").insert({ id, seller_id: sellerId, status: "pending", data: { id, seller: sellerId, kind: v.kind, docs: v.docs, status: "pending", reason: "", time: plan.today, sample: false } });
         if (r.error) throw r.error;
       }
     }
-    const r = await admin.from("dorly_profiles").insert({ id: uid, role, name, phone, email, seller_id: sellerId, created: str(b.today, 40) });
+    const r = await admin.from("dorly_profiles").insert({ id: uid, role, name, phone, email, seller_id: sellerId, created: plan.today });
     if (r.error) throw r.error;
     return json({ ok: true, login, sellerId });
   } catch (e) {

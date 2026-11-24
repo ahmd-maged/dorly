@@ -377,20 +377,39 @@ const LIM={name:80,sellerName:80,area:100,hours:100,branches:300,bio:300,web:300
 const cpLen=v=>Array.from(String(v==null?'':v)).length;   // characters as the database counts them (an emoji = 1)
 const tooLong=(v,n)=>cpLen(v)>n;
 const lenMsg=(label,n)=>`${label} أطول من ${n} حرف — اختصرها شوية`;
-// "facebook.com/x" -> "https://facebook.com/x"; spaces, quotes and <> are not allowed in a link
-function normWeb(v){v=String(v||'').trim();if(!v)return {v:''};if(!/^https?:\/\//i.test(v))v='https://'+v.replace(/^\/+/,'');
- return /^https?:\/\/[^\s"<>]+$/.test(v)&&v.length<=LIM.web?{v}:{v,err:'اللينك مش صحيح — اكتبه من غير مسافات (مثلاً facebook.com/اسم-الصفحة)'}}
+// Same rule as normWeb() in supabase/functions/dorly-signup/rules.ts and the database check:
+// the scheme is stored in lower case ("Https://x" -> "https://x"), "facebook.com/x" -> "https://facebook.com/x";
+// spaces, quotes and <> are not allowed in a link
+function normWeb(v){v=String(v||'').trim();if(!v)return {v:''};
+ v=/^https?:\/\//i.test(v)?v.replace(/^https?:\/\//i,m=>m.toLowerCase()):'https://'+v.replace(/^\/+/,'');
+ return /^https?:\/\/[^\s"<>]+$/.test(v)&&cpLen(v)<=LIM.web?{v}:{v,err:'اللينك مش صحيح — اكتبه من غير مسافات (مثلاً facebook.com/اسم-الصفحة)'}}
+// listing price: whole pounds, same range everywhere (publish form, dashboard, admin edit, database)
+const PRICE={min:1000,max:300000};
+const okPrice=v=>Number.isInteger(v)&&v>=PRICE.min&&v<=PRICE.max;
+const priceMsg=`اكتب سعر صحيح بالجنيه من غير كسور (من ${PRICE.min.toLocaleString('en')} لـ ${PRICE.max.toLocaleString('en')})`;
 const FIELD_AR={parts:'تفاصيل القطع المتغيرة',defects:'وصف العيوب',docs:'أسماء ملفات المستندات','profile.web':'لينك الصفحة',profile:'بيانات الملف',name:'الاسم',city:'المنطقة',msg:'الرسالة',phone:'رقم الموبايل',values:'البيانات الخاصة',storage:'السعة',gen:'الموديل',variant:'الفئة',price:'السعر',battery:'البطارية',color:'اللون',cond:'الحالة',warranty:'الضمان',network:'الشبكة',acc:'المشتملات',pubPhotos:'الصور',photos:'الصور',shots:'لقطات الإعدادات',kind:'نوع التوثيق'};
 const syncMsg=e=>e&&e.field?`ماقدرناش نحفظ — «${FIELD_AR[e.field]||e.field}» فيها بيانات مش مقبولة. بياناتك لسه موجودة: عدّلها وجرّب تاني.`:'ماقدرناش نحفظ — بياناتك لسه موجودة، جرّب تاني بعد شوية.';
 // field rejected by the database -> publish-form step to reopen
 const PUB_FIELD_STEP={gen:0,variant:0,storage:0,battery:0,cond:0,color:0,parts:0,defects:0,acc:1,warranty:1,network:1,flags:1,pubPhotos:2,photos:2,shots:3,price:4,values:4,form:4};
 // what the user typed, kept until the server confirms the save (cleared on success, restored on rejection)
-let AFTER_RELOAD=null,LASTPUB=null,PROFILE_DRAFT=null,VERIF_DRAFT=null,INQ_DRAFT=null;
+let AFTER_RELOAD=null,PROFILE_DRAFT=null,VERIF_DRAFT=null,INQ_DRAFT=null;
+// publish drafts, one per listing id (several can be saving at once in "publish another device" mode);
+// a rejected one goes to FAILED_PUBS and is reopened without ever overwriting a form the user is filling in
+const PUB_DRAFTS=new Map();let FAILED_PUBS=[];
+function pubDirty(){if(!PUB)return false;if(Object.keys(PUB.photos||{}).length||Object.keys(PUB.shots||{}).length)return true;
+ try{return JSON.stringify(PUB.d)!==JSON.stringify(newPub().d)}catch(e){return true}}
+function restoreFailedPub(i){const f=FAILED_PUBS[i];if(!f)return;
+ if(pubDirty()&&!confirm('الفورم المفتوح فيه بيانات لسه ماتبعتتش. تستبدلها بالإعلان اللي ماتحفظش؟'))return;
+ FAILED_PUBS.splice(i,1);PUB=f.pub;PUBDONE=null;if(location.hash!=='#/publish')location.hash='#/publish';renderPublish();showErr([f.msg])}
 Cloud.onSyncError=errs=>{
  const hit=(colls,id)=>id&&errs.find(e=>colls.includes(e.coll)&&e.id===id);let e,D;
- if(LASTPUB&&(e=hit(['listings','listing_private'],LASTPUB.id))){
-  D=LASTPUB;LASTPUB=null;PUB=D.pub;PUB.retryId=D.pub.replace?null:D.id;PUBDONE=null;if(e.field in PUB_FIELD_STEP)PUB.step=PUB_FIELD_STEP[e.field];
-  const m=syncMsg(e);AFTER_RELOAD=()=>{if(location.hash==='#/publish')showErr([m]);else toast(m)};return true}
+ const failed=errs.filter(x=>(x.coll==='listings'||x.coll==='listing_private')&&PUB_DRAFTS.has(x.id));
+ if(failed.length){
+  for(const x of failed){const D=PUB_DRAFTS.get(x.id);if(!D)continue;PUB_DRAFTS.delete(x.id);const pub=D.pub;pub.retryId=pub.replace?null:D.id;
+   if(x.field in PUB_FIELD_STEP)pub.step=PUB_FIELD_STEP[x.field];FAILED_PUBS.push({id:D.id,pub,msg:syncMsg(x)})}
+  if(!pubDirty()){const f=FAILED_PUBS.shift();PUB=f.pub;PUBDONE=null;AFTER_RELOAD=()=>{if(location.hash==='#/publish')showErr([f.msg]);else toast(f.msg)}}
+  else{const m=FAILED_PUBS[FAILED_PUBS.length-1].msg;AFTER_RELOAD=()=>toast(m+' (هتلاقي الإعلان ده فوق فورم النشر)')}
+  return true}
  if(PROFILE_DRAFT&&(e=hit(['sellers','seller_private'],PROFILE_DRAFT.id)||hit(['verifs'],PROFILE_DRAFT.verifId))){
   D=PROFILE_DRAFT;PROFILE_DRAFT=null;DT='profile';const m=syncMsg(e);
   AFTER_RELOAD=()=>{if(location.hash.startsWith('#/dashboard'))for(const k in D.v){const el=$('#'+k);if(el)el.value=D.v[k]}toast(m)};return true}
@@ -429,8 +448,11 @@ const lvlOf=l=>own(VER,l&&l.level)&&VER[l.level]?l.level:1;
 const badgeT=b=>own(BADGES,b)?BADGES[b]:'';
 const devHash=id=>'#/device/'+encodeURIComponent(String(id));
 const sellerHash=id=>'#/seller/'+encodeURIComponent(String(id));
+// images: only Storage files of the Supabase project this page is connected to (Cloud.url), data: images
+// picked on this device, and the bundled catalog pictures (A1: no other project, no other host)
 function safeImg(u){u=String(u==null?'':u);
- if(/^https:\/\/[a-z0-9-]+\.supabase\.co\/storage\/v1\/object\/(public|sign)\/[^"'<>\s\\]+$/i.test(u))return u;
+ const st=(window.Cloud&&Cloud.url?Cloud.url:'')+'/storage/v1/object/';
+ if(st.length>19&&u.startsWith(st)&&/^(public|sign)\/[^"'<>\s\\]+$/.test(u.slice(st.length)))return u;
  if(/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+\/=]+$/i.test(u))return u;
  if(/^\/?(public\/)?images\/iphones\/[A-Za-z0-9._\/-]+$/.test(u)&&u.indexOf('..')<0)return u;
  return ''}
@@ -809,7 +831,7 @@ function widgetHtml(){
  const k=S.pending;if(!k)return '';
  if(S.custom)return `<div class="hint">اكتب الرقم في الخانة اللي تحت ⬇️ — أو <button onclick="cancelCustom()">اختار من الاختيارات</button></div>`;
  if(k==='done')return `<div class="chips">${S.acts.map((a,i)=>`<button class="chip ${a.pri?'pri':''}" onclick="act(${i})">${a.l}</button>`).join('')}</div>`;
- if(k==='photos')return `${S.photos.length?`<div class="thumbs">${S.photos.map(p=>`<img src="${p}" alt="">`).join('')}</div>`:''}<div class="chips"><label class="chip pri" style="cursor:pointer">${I('image',16)} اختار صور<input type="file" accept="image/*" multiple hidden onchange="addPhotos(this)"></label><button class="chip" onclick="donePhotos()">${S.photos.length?'كمّل':'كمّل من غير صور'}</button></div>`;
+ if(k==='photos')return `${S.photos.length?`<div class="thumbs">${S.photos.map(p=>`<img src="${esc(safeImg(p))}" alt="">`).join('')}</div>`:''}<div class="chips"><label class="chip pri" style="cursor:pointer">${I('image',16)} اختار صور<input type="file" accept="image/*" multiple hidden onchange="addPhotos(this)"></label><button class="chip" onclick="donePhotos()">${S.photos.length?'كمّل':'كمّل من غير صور'}</button></div>`;
  const o=optsFor(k);
  if(k==='intent'||k==='seller')return `<div class="opts-cards">${o.map((x,i)=>`<button class="ocard" onclick="pickOpt(${i})"><div class="ico-b">${I(x.i,24)}</div><b>${x.l}</b><span class="d">${x.d}</span></button>`).join('')}</div>`;
  return `<div class="chips">${o.map((x,i)=>`<button class="chip ${x.custom?'sec':''}" onclick="pickOpt(${i})">${x.l}</button>`).join('')}</div>`;
@@ -955,9 +977,9 @@ function viewSeller(id){
  ${ls.length?`<div class="grid">${ls.map(l=>card(l)).join('')}</div>`:'<div class="card empty">مفيش أجهزة معروضة دلوقتي.</div>'}</div>`;
 }
 function gate(t,m){$('#app').innerHTML=`<div class="wrap page"><div class="card empty"><div class="ico-b">${I('lock',24)}</div><h3>${t}</h3><p>${m}</p><br><button class="btn primary" onclick="openLogin({})">دخول / تسجيل</button></div></div>`}
-function dashPrice(id,v){const l=byId(id);v=+v;if(!(v>0)||!Number.isInteger(v)||v>1e8){toast('اكتب سعر صحيح بالجنيه (من غير كسور)');route();return}l.price=v;save();toast('اتحدّث السعر')}
+function dashPrice(id,v){const l=byId(id);v=+v;if(!okPrice(v)){toast(priceMsg);route();return}l.price=v;save();toast('اتحدّث السعر')}
 function dashStatus(id,v){byId(id).status=v;save();toast('اتحدّثت الحالة');route()}
-function dashDel(id){if(!confirm('تحذف الإعلان ده؟'))return;DB.listings=DB.listings.filter(l=>l.id!==id);save();route()}
+function dashDel(id){if(!confirm('تحذف الإعلان ده؟'))return;Cloud.remove('listings',id);DB.listings=DB.listings.filter(l=>l.id!==id);save();route()}
 function inqRead(id){DB.inquiries.find(q=>q.id===id).status='read';save();route()}
 function viewAbout(){
  $('#app').innerHTML=`<div class="wrap page" style="max-width:820px"><h1>عن دورلي</h1><p class="mut" style="font-size:18px;margin:8px 0 22px">منصة بتساعدك تشتري وتبيع وتبدّل الآيفون المستعمل في مصر من غير لف ودوران.</p>
@@ -1301,7 +1323,7 @@ function saveProfile(ev){
  save().then(()=>{if(PROFILE_DRAFT===draft){PROFILE_DRAFT=null;toast('اتحفظ الملف')}});USER.name=s.name;renderHeader();route();
 }
 function devTab(mine,mer,stl){
- return mine.length?`<div class="scroll-x"><table class="tbl"><tr><th>الجهاز</th><th>السعة</th><th>البطارية</th><th>السعر (جنيه)</th><th>الحالة</th><th>التحقق</th><th></th></tr>${mine.map(l=>`<tr><td><a href="${esc(devHash(l.id))}"><b>${esc(nm(l))}</b></a></td><td>${esc(l.storage)}</td><td>${esc(l.battery)}%</td><td><input type="number" value="${esc(l.price)}" min="0" ${dchange('dashPrice',l.id)}></td><td>${l.status==='pending'?(isUnpaid(l)?`<span class="tag warn">مستني الدفع</span><div><button class="btn primary sm" style="margin-top:4px" ${dclick('startPayment',l.id)}>ادفع ${fmt(l.pay.amount)} جنيه</button></div>`:`<span class="tag warn">قيد المراجعة</span>`):l.status==='rejected'?`<span class="tag rej">اترفض</span><div class="hnt">${esc(l.reason||'')}</div><button class="btn soft sm" ${dclick('republish',l.id)}>عدّل وأعد الإرسال</button>`:`<select ${dchange('dashStatus',l.id)}>${['active','paused','sold'].map(v=>`<option value="${v}" ${l.status===v?'selected':''}>${stl[v]}</option>`).join('')}</select>`}</td><td>${vtag(l)}</td><td><button class="icbtn" title="حذف" ${dclick('dashDel',l.id)}>${I('trash',16)}</button></td></tr>`).join('')}</table></div>${mer?'':`<div class="callout">حساب الفرد بيعرض جهاز واحد في المرة. علّم إعلانك "اتباع" عشان تضيف جهاز جديد.</div>`}`
+ return mine.length?`<div class="scroll-x"><table class="tbl"><tr><th>الجهاز</th><th>السعة</th><th>البطارية</th><th>السعر (جنيه)</th><th>الحالة</th><th>التحقق</th><th></th></tr>${mine.map(l=>`<tr><td><a href="${esc(devHash(l.id))}"><b>${esc(nm(l))}</b></a></td><td>${esc(l.storage)}</td><td>${esc(l.battery)}%</td><td><input type="number" value="${esc(l.price)}" min="${PRICE.min}" max="${PRICE.max}" step="1" ${dchange('dashPrice',l.id)}></td><td>${l.status==='pending'?(isUnpaid(l)?`<span class="tag warn">مستني الدفع</span><div><button class="btn primary sm" style="margin-top:4px" ${dclick('startPayment',l.id)}>ادفع ${fmt(l.pay.amount)} جنيه</button></div>`:`<span class="tag warn">قيد المراجعة</span>`):l.status==='rejected'?`<span class="tag rej">اترفض</span><div class="hnt">${esc(l.reason||'')}</div><button class="btn soft sm" ${dclick('republish',l.id)}>عدّل وأعد الإرسال</button>`:`<select ${dchange('dashStatus',l.id)}>${['active','paused','sold'].map(v=>`<option value="${v}" ${l.status===v?'selected':''}>${stl[v]}</option>`).join('')}</select>`}</td><td>${vtag(l)}</td><td><button class="icbtn" title="حذف" ${dclick('dashDel',l.id)}>${I('trash',16)}</button></td></tr>`).join('')}</table></div>${mer?'':`<div class="callout">حساب الفرد بيعرض جهاز واحد في المرة. علّم إعلانك "اتباع" عشان تضيف جهاز جديد.</div>`}`
  :`<div class="card empty"><div class="ico-b">${I('phone',24)}</div><h3>لسه مفيش أجهزة</h3><p>ضيف جهازك من الزرار فوق أو من المحادثة.</p></div>`;
 }
 function inqTab(inq){
@@ -1387,7 +1409,9 @@ function toPublish(){
 function republish(id){
  const l=byId(id);if(!l)return;const f=l.form||{};
  PUB=newPub(Object.assign({},f,{gen:String(l.gen),variant:l.variant,storage:l.storage,battery:String(l.battery),cond:l.cond,price:String(l.price)}));
- PUB.photos=Object.assign({},l.pubPhotos||{});PUB.shots=Object.assign({},l.shots||{});PUB.replace=id;PUBDONE=null;go('#/publish');
+ // public photos are re-used only if they are valid Storage URLs; screenshots keep their stored reference
+ // (shown only through safeImg) so an unchanged resubmission does not lose them
+ PUB.photos={};for(const k in (l.pubPhotos||{})){const u=safeImg(l.pubPhotos[k]);if(u)PUB.photos[k]=u}PUB.shots=Object.assign({},l.shots||{});PUB.replace=id;PUBDONE=null;go('#/publish');
 }
 /* field helpers */
 const pv=k=>esc(PUB.d[k]==null?'':PUB.d[k]);
@@ -1397,7 +1421,7 @@ const psel=(id,label,opts,o={})=>`<label>${lab(label,o.req)}<select id="p_${id}"
 const pchk=(id,text)=>`<label class="chkl"><input type="checkbox" ${PUB.d[id]?'checked':''} onchange="PUB.d.${id}=this.checked"> <span>${text}</span></label>`;
 function slotCard(store,s){
  const src=PUB[store][s[0]];
- return `<div class="slot ${src?'has':''}"><div class="slot-img">${src?`<img src="${src}" alt="" onclick="viewImg(this.src)" style="cursor:zoom-in">`:I('image',26)}</div><div style="flex:1;min-width:0"><b>${s[1]}</b>${s[3]?' <span class="rq">*</span>':' <span class="tag">اختياري</span>'}<div class="hnt">${s[2]}</div><div style="display:flex;gap:6px;margin-top:6px"><label class="btn ${src?'ghost':'primary'} sm" style="cursor:pointer">${src?'تغيير':'ارفع صورة'}<input type="file" accept="image/*" hidden onchange="pubFile('${store}','${s[0]}',this)"></label>${src?`<button type="button" class="btn danger sm" onclick="pubRm('${store}','${s[0]}')">حذف</button>`:''}</div></div></div>`;
+ return `<div class="slot ${src?'has':''}"><div class="slot-img">${src&&safeImg(src)?`<img src="${esc(safeImg(src))}" alt="" onclick="viewImg(this.src)" style="cursor:zoom-in">`:I('image',26)}</div><div style="flex:1;min-width:0"><b>${s[1]}</b>${s[3]?' <span class="rq">*</span>':' <span class="tag">اختياري</span>'}<div class="hnt">${s[2]}</div><div style="display:flex;gap:6px;margin-top:6px"><label class="btn ${src?'ghost':'primary'} sm" style="cursor:pointer">${src?'تغيير':'ارفع صورة'}<input type="file" accept="image/*" hidden onchange="pubFile('${store}','${s[0]}',this)"></label>${src?`<button type="button" class="btn danger sm" onclick="pubRm('${store}','${s[0]}')">حذف</button>`:''}</div></div></div>`;
 }
 async function pubFile(store,key,inp){
  const f=inp.files[0];inp.value='';if(!f)return;
@@ -1405,7 +1429,7 @@ async function pubFile(store,key,inp){
 }
 function pubRm(store,key){delete PUB[store][key];renderPublish()}
 function pubAcc(k,on){const a=PUB.d.acc;if(on&&!a.includes(k))a.push(k);if(!on)PUB.d.acc=a.filter(x=>x!==k)}
-function viewImg(src){openModal(`<img src="${src}" alt="" style="max-width:100%;border-radius:12px;display:block;margin:auto"><button class="btn ghost" style="margin-top:12px;width:100%" onclick="closeModal()">إغلاق</button>`)}
+function viewImg(src){openModal(`<img src="${esc(src)}" alt="" style="max-width:100%;border-radius:12px;display:block;margin:auto"><button class="btn ghost" style="margin-top:12px;width:100%" onclick="closeModal()">إغلاق</button>`)}
 
 function pubValidate(st){
  const d=PUB.d,e=[],need=(k,m)=>{if(!String(d[k]==null?'':d[k]).trim())e.push(m)},mer=USER.role==='merchant';
@@ -1434,7 +1458,7 @@ function pubValidate(st){
   if(!d.shotsOk)e.push('لازم تأكد إن البطارية والموديل والسعة المكتوبين مطابقين للقطات');
  }
  if(st==='review'){
-  const p=+d.price;if(!(p>=1000&&p<=300000))e.push('اكتب سعر صحيح بالجنيه (من 1,000 لـ 300,000)');
+  if(!okPrice(+d.price))e.push(priceMsg);
   if(!okPhone(d.whatsapp||''))e.push('اكتب رقم واتساب صحيح للتواصل (مثلاً 01012345678)');
   if(!d.decl)e.push('لازم تقرّ إن البيانات والصور حقيقية للجهاز المعروض');
  }
@@ -1471,7 +1495,7 @@ function pubStepHtml(st){
   const rows=[['الجهاز',`iPhone ${d.gen}${d.variant?' '+d.variant:''} · ${d.storage} · ${d.color}`],['البطارية والحالة',`${d.battery}% · ${COND[d.cond].t}`],['القطع المتغيرة',partsTxt(d)],['العيوب',defTxt(d)],['المشتملات',d.acc.length?d.acc.map(k=>ACC_O.find(a=>a[0]===k)[1]).join('، '):'مفيش'],['الضمان',WAR_T[d.warranty]+(d.warranty==='shop'?' ('+d.wMonths+' شهر)':'')],['الشبكة',NET_T[d.network]],['iCloud','مسجّل خروج (إقرار البائع)']];
   return `<h2>السعر والنشر</h2><p class="mut" style="margin-bottom:12px">راجع كل حاجة قبل ما تنشر.</p>
   <table class="sumtab">${rows.map(r=>`<tr><td>${r[0]}</td><td>${esc(r[1])}</td></tr>`).join('')}</table>
-  <div class="meta" style="margin:12px 0">${ph.map(s=>`<img src="${PUB.photos[s[0]]}" alt="${s[1]}" title="${s[1]}" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--bd);cursor:zoom-in" onclick="viewImg(this.src)">`).join('')}</div>
+  <div class="meta" style="margin:12px 0">${ph.map(s=>`<img src="${esc(safeImg(PUB.photos[s[0]]))}" alt="${s[1]}" title="${s[1]}" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--bd);cursor:zoom-in" onclick="viewImg(this.src)">`).join('')}</div>
   <div class="hnt" style="margin-bottom:12px">${ph.length} صور للجهاز (عامة) · ${sh.length} لقطات إعدادات (خاصة)</div>
   <div class="form">${pfld('price','السعر المطلوب (جنيه)',{req:1,type:'number',attr:'min="1000"',hint:est?`للمقارنة: متوسط المعروض لنفس الموديل والسعة حوالي ${fmt(est.est)} جنيه (من ${est.n} إعلانات، من ${fmt(est.min)} لـ ${fmt(est.max)}).`:'مفيش إعلانات كفاية لنفس الموديل والسعة عشان أقدّر لك سعر مقارنة.'})}
   ${pfld('whatsapp','رقم واتساب للتواصل',{req:1,type:'tel',ph:'01XXXXXXXXX',attr:'inputmode="tel" dir="ltr" style="text-align:start"',hint:`${I('lock',12)} المشترين بيكلّموك عليه من زرار «واتساب» في الإعلان (لازم يكونوا عاملين حساب). الرقم نفسه مش بيتعرض في الإعلان.`})}
@@ -1483,7 +1507,7 @@ function pubStepHtml(st){
 function renderPublish(){
  const st=PUB_STEPS[PUB.step][0];
  const stepper=`<div class="stepper">${PUB_STEPS.map((s,i)=>`<div class="st ${i<PUB.step?'done':i===PUB.step?'on':''}"><i>${i<PUB.step?'✓':i+1}</i><span>${s[1]}</span></div>`).join('')}</div>`;
- $('#app').innerHTML=`<div class="wrap page" style="max-width:820px"><a class="crumb" href="#/dashboard">${I('back',14)} لوحة البيع</a><h1>${PUB.replace?'تعديل وإعادة إرسال الإعلان':'نشر جهاز جديد'}</h1><p class="mut" style="margin-bottom:14px">كل الحقول المعلّمة بـ <span class="rq">*</span> إجبارية، والصور ولقطات الإعدادات لازم تتحط قبل النشر.</p><div class="card" style="padding:24px">${stepper}${pubStepHtml(st)}</div></div>`;
+ $('#app').innerHTML=`<div class="wrap page" style="max-width:820px"><a class="crumb" href="#/dashboard">${I('back',14)} لوحة البيع</a><h1>${PUB.replace?'تعديل وإعادة إرسال الإعلان':'نشر جهاز جديد'}</h1><p class="mut" style="margin-bottom:14px">كل الحقول المعلّمة بـ <span class="rq">*</span> إجبارية، والصور ولقطات الإعدادات لازم تتحط قبل النشر.</p>${FAILED_PUBS.map((f,i)=>`<div class="callout" style="margin:0 0 12px">إعلان ${esc(f.pub.d.gen?'iPhone '+f.pub.d.gen+(f.pub.d.variant?' '+f.pub.d.variant:''):'')} ماتحفظش — بياناته لسه موجودة. <button type="button" class="btn soft sm" onclick="restoreFailedPub(${i})">افتحه وكمّله</button></div>`).join('')}<div class="card" style="padding:24px">${stepper}${pubStepHtml(st)}</div></div>`;
 }
 function viewPublish(){
  if(!USER||!['merchant','individual'].includes(USER.role))return gate('نشر جهاز','لازم حساب بائع (تاجر أو بائع حر) عشان تنشر جهاز.');
@@ -1502,8 +1526,8 @@ function pubPublish(){
  const l={id:old?old.id:(PUB.retryId||'L'+Date.now()),wa:true,pay:old&&old.pay?old.pay:{amount:LISTING_FEE,currency:'EGP',status:'unpaid'},gen:/^\d+$/.test(d.gen)?+d.gen:d.gen,variant:d.variant,storage:d.storage,battery:+d.battery,cond:d.cond,price:+d.price,seller:USER.sellerId,level:1,color:d.color,status:'pending',sample:false,insp:null,
   parts:partsTxt(d),defects:defTxt(d),acc:d.acc.slice(),warranty:WAR_T[d.warranty]+(d.warranty==='shop'?' ('+d.wMonths+' شهر)':''),network:NET_T[d.network],icloud:true,nego:!!d.nego,date:'نوفمبر 2026',
   form:Object.assign({},d,{acc:d.acc.slice()}),pubPhotos:Object.assign({},PUB.photos),shots:Object.assign({},PUB.shots)};
- const draft=LASTPUB={id:l.id,pub:JSON.parse(JSON.stringify(PUB))};
- DB.listings.unshift(l);save().then(()=>{if(LASTPUB===draft)LASTPUB=null});PUBDONE={l,again:!!d.again};PUB=null;
+ const draft={id:l.id,pub:JSON.parse(JSON.stringify(PUB))};PUB_DRAFTS.set(l.id,draft);
+ DB.listings.unshift(l);save().then(()=>{if(PUB_DRAFTS.get(l.id)===draft)PUB_DRAFTS.delete(l.id)});PUBDONE={l,again:!!d.again};PUB=null;
  if(PUBDONE.again){toast('اتبعت للمراجعة ✅ — ابدأ الجهاز التالي');PUB=newPub();PUBDONE=null;renderPublish();window.scrollTo(0,0);return}
  renderPubDone();window.scrollTo(0,0);
 }

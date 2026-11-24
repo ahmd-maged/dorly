@@ -25,11 +25,17 @@
   const LISTING_PRIVATE = ['imei', 'whatsapp'];   // listing form fields kept in dorly_listing_private (owner + admin)
   const LOGIN_DOMAIN = '@phone.dorly.app';
 
-  let snap = {};                 // coll -> Map(id -> serialized json)
-  let privSnap = new Map();      // seller id -> serialized private json
-  let lPrivSnap = new Map();     // listing id -> serialized private json
-  let userSnap = new Map();      // profile id -> disabled flag
-  const pathOf = new Map();      // displayed image src (signed URL / data URL) -> 'sbp:<path>'
+  // Every loaded data set (the `DB` object a page works on) keeps the server snapshot it was built from:
+  //   snap: coll -> Map(id -> serialized json), privSnap / lPrivSnap: private seller / listing fields,
+  //   userSnap: profile id -> disabled flag.
+  // A save always compares the data against ITS OWN snapshot, never against a newer one installed by a
+  // reload, so a save queued before a reload only writes what the user actually changed (P1).
+  const BASE = new WeakMap();    // DB object -> its snapshot
+  let current = null;            // the most recently loaded DB object
+  // Rows are deleted on the server ONLY when a page asks for it with Cloud.remove(coll, id). A row that is
+  // merely missing from a page's data (for example because that data is older than the server) is never deleted.
+  const pendingDel = new Map();  // 'coll|id' -> {coll, id}
+  const pathOf = new Map();      // signed URL -> 'sbp:<path>', and '<listing id>|<data URL>' -> 'sbp:<path>'
   let session = null, profile = null;
   let chain = Promise.resolve();
 
@@ -59,7 +65,9 @@
       if ('whatsapp' in o.profile) o.profile.wa = !!o.profile.whatsapp;   // public flag only
       PRIVATE_KEYS.forEach(k => delete o.profile[k]);
     }
-    if (coll === 'listings' && o.shots) for (const k in o.shots) { const p = pathOf.get(o.shots[k]); if (p) o.shots[k] = p; }
+    // a screenshot picked on this device maps to the file uploaded FOR THIS LISTING only (same picture in two
+    // listings = two files); a signed URL from the server maps to the file it was signed for
+    if (coll === 'listings' && o.shots) for (const k in o.shots) { const p = pathOf.get(o.id + '|' + o.shots[k]) || pathOf.get(o.shots[k]); if (p) o.shots[k] = p; }
     if (coll === 'listings' && o.form) {
       if ('whatsapp' in o.form) o.wa = !!o.form.whatsapp;          // public flag only
       LISTING_PRIVATE.forEach(k => delete o.form[k]);
@@ -107,7 +115,7 @@
       const v = out.shots[k];
       if (typeof v === 'string' && v.startsWith('data:')) {
         const ref = 'sbp:' + await upload('dorly-private', v, `listings/${live.id}/${k}`);
-        out.shots[k] = ref; pathOf.set(v, ref);
+        out.shots[k] = ref; pathOf.set(live.id + '|' + v, ref);
       }
     }
   }
@@ -150,13 +158,13 @@
     }
     const DB = { users: [] }, colls = Object.keys(T);
     const res = await Promise.all(colls.map(c => selectAll(T[c].table)));
-    snap = {};
+    const snap = {};
+    let privSnap = new Map(), lPrivSnap = new Map();
     colls.forEach((c, i) => {
       const rows = ordered(res[i], T[c].order);
       DB[c] = rows.map(r => normalize(c, Object.assign({}, r.data, { id: r.id })));
       snap[c] = new Map(DB[c].map(o => [o.id, JSON.stringify(serialize(c, o))]));
     });
-    privSnap = new Map(); lPrivSnap = new Map();
     if (session) {
       const { data: priv } = await sb.from('dorly_seller_private').select('*');
       (priv || []).forEach(p => {
@@ -175,7 +183,9 @@
       });
       snap.listings = new Map(DB.listings.map(o => [o.id, JSON.stringify(serialize('listings', o))]));
     }
-    userSnap = new Map(DB.users.map(u => [u.id, !!u.disabled]));
+    const userSnap = new Map(DB.users.map(u => [u.id, !!u.disabled]));
+    BASE.set(DB, { snap, privSnap, lPrivSnap, userSnap });
+    current = DB;
     return DB;
   }
 
@@ -195,11 +205,15 @@
     return { coll, id, op, field: m ? m[1] : null, message };
   }
   async function doSync(DB) {
-    const errs = [];
+    const errs = [], S = BASE.get(DB);
+    if (!S) return [failure('sync', null, 'sync', 'data was not loaded from the server')];
+    const { snap, privSnap, lPrivSnap, userSnap } = S;
+    const stale = DB !== current;   // this data is older than the last reload
+    let wrote = false;
     for (const c of Object.keys(T)) {
-      const prev = snap[c] || (snap[c] = new Map()), seen = new Set();
+      const prev = snap[c] || (snap[c] = new Map());
       for (const live of DB[c] || []) {
-        seen.add(live.id);
+        if (pendingDel.has(c + '|' + live.id)) continue;   // being deleted on purpose
         let out = serialize(c, live), js = JSON.stringify(out);
         if (prev.get(live.id) !== js) {
           try {
@@ -215,6 +229,7 @@
               if (!r.error) adoptServer(live, r.data[0].data);
             } else r = await sb.from(T[c].table).insert(row);
             if (r.error) throw r.error;
+            wrote = true;
             prev.set(live.id, JSON.stringify(serialize(c, live)));
           } catch (e) { errs.push(failure(c, live.id, prev.has(live.id) ? 'update' : 'insert', e)); }
         }
@@ -224,7 +239,7 @@
             const r = lPrivSnap.has(live.id)
               ? await sb.from('dorly_listing_private').update({ data: JSON.parse(p) }).eq('listing_id', live.id).select('listing_id')
               : await sb.from('dorly_listing_private').insert({ listing_id: live.id, data: JSON.parse(p) });
-            if (r.error || (lPrivSnap.has(live.id) && !(r.data || []).length)) errs.push(failure('listing_private', live.id, 'write', r.error || 'not allowed')); else lPrivSnap.set(live.id, p);
+            if (r.error || (lPrivSnap.has(live.id) && !(r.data || []).length)) errs.push(failure('listing_private', live.id, 'write', r.error || 'not allowed')); else { lPrivSnap.set(live.id, p); wrote = true; }
           }
         }
         if (c === 'sellers' && session) {          // private seller fields
@@ -233,20 +248,23 @@
             const r = privSnap.has(live.id)
               ? await sb.from('dorly_seller_private').update({ data: JSON.parse(p) }).eq('seller_id', live.id).select('seller_id')
               : await sb.from('dorly_seller_private').insert({ seller_id: live.id, data: JSON.parse(p) });
-            if (r.error || (privSnap.has(live.id) && !(r.data || []).length)) errs.push(failure('seller_private', live.id, 'write', r.error || 'not allowed')); else privSnap.set(live.id, p);
+            if (r.error || (privSnap.has(live.id) && !(r.data || []).length)) errs.push(failure('seller_private', live.id, 'write', r.error || 'not allowed')); else { privSnap.set(live.id, p); wrote = true; }
           }
         }
       }
-      if (c === 'audit') continue;                  // the audit log is append-only
-      for (const id of [...prev.keys()]) if (!seen.has(id)) {
-        const r = await sb.from(T[c].table).delete().eq('id', id).select('id');
-        if (r.error || !(r.data || []).length) errs.push(failure(c, id, 'delete', r.error || 'not allowed')); else prev.delete(id);
-      }
+    }
+    // explicit deletions only (Cloud.remove); the audit log is append-only
+    for (const [k, { coll: c, id }] of [...pendingDel]) {
+      pendingDel.delete(k);
+      if (c === 'audit' || !T[c]) continue;
+      const r = await sb.from(T[c].table).delete().eq('id', id).select('id');
+      if (r.error || !(r.data || []).length) errs.push(failure(c, id, 'delete', r.error || 'not allowed'));
+      else { wrote = true; for (const st of [S, current && BASE.get(current)]) if (st && st.snap[c]) st.snap[c].delete(id); }
     }
     for (const u of DB.users || []) {               // admins can (de)activate accounts
       if (userSnap.has(u.id) && userSnap.get(u.id) !== !!u.disabled) {
         const r = await sb.from('dorly_profiles').update({ disabled: !!u.disabled }).eq('id', u.id).select('id');
-        if (r.error || !(r.data || []).length) errs.push(failure('users', u.id, 'update', r.error || 'not allowed')); else userSnap.set(u.id, !!u.disabled);
+        if (r.error || !(r.data || []).length) errs.push(failure('users', u.id, 'update', r.error || 'not allowed')); else { userSnap.set(u.id, !!u.disabled); wrote = true; }
       }
     }
     if (errs.length) {
@@ -256,9 +274,11 @@
       try { handled = typeof Cloud.onSyncError === 'function' && !!Cloud.onSyncError(errs); } catch (e) { console.error(e); }
       if (!handled && typeof toast === 'function') toast('ماقدرناش نحفظ التغيير ده — اتأكد إنك داخل بحسابك وجرّب تاني');
       await reload();                                   // show what the server really has
-    }
+    } else if (stale && wrote) await reload();          // the page shows newer data than this save: refresh it
     return errs;
   }
+  // ask for a row to be deleted on the next save (the only way anything is deleted)
+  function remove(coll, id) { if (T[coll] && id != null) pendingDel.set(coll + '|' + id, { coll, id: String(id) }); }
   // resolves to the list of rejected writes of this save ([] = everything saved)
   function sync(DB) { chain = chain.then(() => doSync(DB)).catch(e => { console.error(e); return [failure('sync', null, 'sync', e)]; }); return chain; }
   async function reload() { const db = await load(); if (typeof Cloud.onReload === 'function') Cloud.onReload(db); return db; }
@@ -318,6 +338,6 @@
     return data || {};
   }
 
-  const Cloud = { sb, load, sync, reload, user, signIn, signUp, signOut, taken, otp, sellerWhatsapp, listingWhatsapp, onReload: null, onSyncError: null, disabledNotice: false };
+  const Cloud = { sb, url: SUPABASE_URL, load, sync, reload, remove, user, signIn, signUp, signOut, taken, otp, sellerWhatsapp, listingWhatsapp, onReload: null, onSyncError: null, disabledNotice: false };
   window.Cloud = Cloud;
 })();

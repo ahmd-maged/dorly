@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """Generates supabase/proposed/phase1_input_validation.sql (the migration) and, with --check,
 a READ-ONLY query that evaluates the very same rules against existing rows. One rule list, two outputs."""
-import sys
+import re, sys
 
 ID_RE = r'^[A-Za-z0-9_-]{1,64}$'
-PUB_URL = r'^https://[a-z0-9]{20}\.supabase\.co/storage/v1/object/public/dorly-public/[0-9a-f-]{36}/listings/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,40}\.(jpg|png|webp)$'
-SHOT_REF = r'^sbp:[0-9a-f-]{36}/listings/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,40}\.(jpg|png|webp)$'
+# Supabase project whose Storage may hold Dorly media. Production by default; a staging database must be
+# generated with its own project:  python3 tools/gen_validation_sql.py --project-ref <ref>
+PROJECT_REF = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--project-ref=')), 'sayqxowybxpqmqfshmqk')
+assert re.fullmatch(r'[a-z0-9]{20}', PROJECT_REF), 'project ref must be 20 lowercase letters/digits'
+# Media paths are <owner uid>/listings/<listing id>/<name>.<ext> (see uploadMedia in assets/dorly-cloud.js).
+# OWNER and RID are filled in per row: the folder must be the listing owner's and the listing's own id, so a
+# listing can neither point at another project nor reuse another user's (or another listing's) files.
+# If a listing has no owner any more (account deleted) only the project and file-name shape are checked.
+MEDIA_TAIL = r"/listings/' || RID || '/[A-Za-z0-9_-]{1,40}\.(jpg|png|webp)$'"
+MEDIA_PUBLIC = r"('^https://" + PROJECT_REF + r"\.supabase\.co/storage/v1/object/public/dorly-public/' || coalesce(OWNER, '[0-9a-f-]{36}') || '" + MEDIA_TAIL + ")"
+MEDIA_PRIVATE = r"('^sbp:' || coalesce(OWNER, '[0-9a-f-]{36}') || '" + MEDIA_TAIL + ")"
+PRICE_MIN, PRICE_MAX = 1000, 300000       # whole pounds; the same range in dorly.html and admin.html (PRICE)
 GENS = ['2G','3G','3GS','4','4S','5','5c','5s','6','6s','7','8','SE','X','XR','XS','11','12','13','14','15','16','17','16e','17e','Air']
 VARIANTS = ['', 'Plus', 'Pro', 'Pro Max', 'mini', 'Max', 'e', '2016', '2020', '2022']
 
@@ -29,12 +39,12 @@ def INT(k, lo, hi, req=False):
     return opt(k, f"jsonb_typeof(D->{q(k)})='number' and (D->>{q(k)})::numeric between {lo} and {hi} and (D->>{q(k)})::numeric = trunc((D->>{q(k)})::numeric)", req)
 def BOOL(k): return opt(k, f"jsonb_typeof(D->{q(k)})='boolean'")
 def OBJ(k): return opt(k, f"jsonb_typeof(D->{q(k)})='object'")
-def MAP(k, keys, rx):
-    return opt(k, f"jsonb_typeof(D->{q(k)})='object' and not exists (select 1 from jsonb_each(D->{q(k)}) e where not (e.key = any({arr(keys)}) and (jsonb_typeof(e.value)='null' or (jsonb_typeof(e.value)='string' and (e.value#>>'{{}}') ~ {q(rx)}))))")
+def MAP(k, keys, rx_expr):
+    return opt(k, f"jsonb_typeof(D->{q(k)})='object' and not exists (select 1 from jsonb_each(D->{q(k)}) e where not (e.key = any({arr(keys)}) and (jsonb_typeof(e.value)='null' or (jsonb_typeof(e.value)='string' and (e.value#>>'{{}}') ~ {rx_expr}))))")
 def ARR_ENUM(k, xs, maxn):
     return opt(k, f"jsonb_typeof(D->{q(k)})='array' and jsonb_array_length(D->{q(k)}) <= {maxn} and not exists (select 1 from jsonb_array_elements(D->{q(k)}) e where not (jsonb_typeof(e)='string' and (e#>>'{{}}') = any({arr(xs)})))")
-def ARR_RE(k, rx, maxn):
-    return opt(k, f"jsonb_typeof(D->{q(k)})='array' and jsonb_array_length(D->{q(k)}) <= {maxn} and not exists (select 1 from jsonb_array_elements(D->{q(k)}) e where not (jsonb_typeof(e)='string' and (e#>>'{{}}') ~ {q(rx)}))")
+def ARR_RE(k, rx_expr, maxn):
+    return opt(k, f"jsonb_typeof(D->{q(k)})='array' and jsonb_array_length(D->{q(k)}) <= {maxn} and not exists (select 1 from jsonb_array_elements(D->{q(k)}) e where not (jsonb_typeof(e)='string' and (e#>>'{{}}') ~ {rx_expr}))")
 GEN = opt('gen', f"(jsonb_typeof(D->'gen')='number' and (D->>'gen')::numeric between 1 and 40 and (D->>'gen')::numeric = trunc((D->>'gen')::numeric)) or (jsonb_typeof(D->'gen')='string' and ((D->>'gen') = any({arr(GENS)}) or (D->>'gen') ~ '^[0-9]{{1,2}}$'))", True)
 FLAT_STRINGS = lambda n: f"not exists (select 1 from jsonb_each(D) e where not (jsonb_typeof(e.value) in ('null','boolean') or (jsonb_typeof(e.value)='string' and char_length(e.value#>>'{{}}') <= {n})))"
 
@@ -42,15 +52,15 @@ RULES = {
  'dorly_listings': [
   ('seller', RE('seller', ID_RE, True)), ('gen', GEN), ('variant', ENUM('variant', VARIANTS)),
   ('storage', RE('storage', r'^[0-9]{1,4}(GB|TB)$', True)), ('battery', INT('battery', 0, 100, True)),
-  ('price', INT('price', 1, 100000000, True)), ('cond', ENUM('cond', ['excellent','vgood','good'], True)),
+  ('price', INT('price', PRICE_MIN, PRICE_MAX, True)), ('cond', ENUM('cond', ['excellent','vgood','good'], True)),
   ('status', ENUM('status', ['active','pending','paused','sold','rejected'], True)), ('level', INT('level', 1, 4)),
   ('color', TXT('color', 40)), ('date', TXT('date', 40)), ('insp', TXT('insp', 40)), ('reason', TXT('reason', 200)),
   ('parts', TXT('parts', LIM['parts'])), ('defects', TXT('defects', LIM['defects'])), ('warranty', TXT('warranty', 100)), ('network', TXT('network', 100)),
   ('acc', ARR_ENUM('acc', ['box','charger','cable','invoice'], 4)),
   ('flags', ' and '.join(BOOL(k) for k in ['nego','icloud','reviewed','sample','wa','pausedByAdmin'])),
-  ('pubPhotos', MAP('pubPhotos', ['front','back','sides','camera','defect'], PUB_URL)),
-  ('photos', ARR_RE('photos', PUB_URL, 10)),
-  ('shots', MAP('shots', ['battery','about','storage','parts'], SHOT_REF)),
+  ('pubPhotos', MAP('pubPhotos', ['front','back','sides','camera','defect'], MEDIA_PUBLIC)),
+  ('photos', ARR_RE('photos', MEDIA_PUBLIC, 10)),
+  ('shots', MAP('shots', ['battery','about','storage','parts'], MEDIA_PRIVATE)),
   ('form', OBJ('form')),
   ('pay', opt('pay', "jsonb_typeof(D->'pay')='object' and coalesce(D->'pay'->>'status','unpaid') in ('unpaid','paid')")),
  ],
@@ -80,14 +90,17 @@ RULES = {
  'dorly_listing_private': [('values', FLAT_STRINGS(300))],
 }
 
-def problem_expr(D, RID, TBL):
+def problem_expr(D, RID, TBL, OWN):
     parts = [f"when {RID} is null or {RID} !~ {q(ID_RE)} then 'id'",
              f"when jsonb_typeof({D}) is distinct from 'object' then 'data'",
              f"when pg_column_size({D}) > 100000 then 'data size'"]
     for t, rules in RULES.items():
         inner = ' '.join(f"when not ({c}) then {q(n)}" for n, c in rules)
         parts.append(f"when {TBL} = {q(t)} then (case {inner} else null end)")
-    return ('case ' + '\n  '.join(parts) + ' else null end').replace('D->', f'{D}->').replace('(D ?', f'({D} ?').replace('jsonb_each(D)', f'jsonb_each({D})')
+    out = ('case ' + '\n  '.join(parts) + ' else null end').replace('D->', f'{D}->').replace('(D ?', f'({D} ?').replace('jsonb_each(D)', f'jsonb_each({D})')
+    # media rules: owner folder and listing id (the id was already checked against ID_RE above, so it is regex-safe;
+    # the owner is a uuid column, i.e. only hex digits and dashes)
+    return out.replace('OWNER', OWN).replace("' || RID || '", f"' || {RID} || '")
 
 TABLES_ID = ['dorly_listings','dorly_sellers','dorly_inquiries','dorly_complaints','dorly_verifs','dorly_audit']
 
@@ -102,6 +115,8 @@ def migration():
     return f"""-- =====================================================================
 -- PROPOSED (not applied): Phase 1 server-side input validation for Dorly.
 -- Target: Supabase project database, PostgreSQL 17 (works on PostgreSQL 12+; does NOT use CREATE OR REPLACE TRIGGER).
+-- Media URLs are only accepted from Supabase project {PROJECT_REF} (regenerate with --project-ref=<ref> for staging),
+-- inside the listing owner's folder and the listing's own folder.
 -- Adds a second BEFORE trigger "dorly_validate" on every dorly_* table that holds app data.
 -- Triggers of the same timing fire in name order, so it runs AFTER the existing "dorly_guard"
 -- (which rewrites protected fields) and checks the final row. The guard triggers are not touched.
@@ -133,13 +148,16 @@ begin
   end loop;
 end $chk$;
 
-create or replace function dorly_internal.dorly_problem(tbl text, rid text, d jsonb) returns text
-language sql immutable set search_path = pg_catalog as $$
-  select {problem_expr('d', 'rid', 'tbl')}
+-- owner: the listing's owner (auth uid) for dorly_listings, so media paths can be tied to it; null elsewhere
+create or replace function dorly_internal.dorly_problem(tbl text, rid text, d jsonb, owner text) returns text
+language sql immutable set search_path = pg_catalog, pg_temp as $$
+  select {problem_expr('d', 'rid', 'tbl', 'owner')}
 $$;
 
+-- search_path holds only pg_catalog (and pg_temp last, as recommended for SECURITY DEFINER functions):
+-- every Dorly object it uses is schema-qualified, so nothing can be shadowed by objects in other schemas.
 create or replace function dorly_internal.dorly_validate() returns trigger language plpgsql security definer
-set search_path = pg_catalog, public, dorly_internal as $$
+set search_path = pg_catalog, pg_temp as $$
 declare rid text; p text;
 begin
   rid := coalesce(to_jsonb(new)->>'id', to_jsonb(new)->>'seller_id', to_jsonb(new)->>'listing_id');
@@ -147,7 +165,7 @@ begin
   if tg_op = 'UPDATE' and rid is distinct from coalesce(to_jsonb(old)->>'id', to_jsonb(old)->>'seller_id', to_jsonb(old)->>'listing_id') then
     raise exception using errcode = 'check_violation', message = 'dorly: id cannot change', hint = tg_table_name;
   end if;
-  p := dorly_internal.dorly_problem(tg_table_name, rid, new.data);
+  p := dorly_internal.dorly_problem(tg_table_name, rid, new.data, case when tg_table_name = 'dorly_listings' then to_jsonb(new)->>'owner' end);
   if p is not null then
     raise exception using errcode = 'check_violation', message = 'dorly: invalid ' || p, hint = tg_table_name;
   end if;
@@ -156,10 +174,12 @@ end $$;
 
 -- owned by postgres (same owner as the existing guard functions); nobody else may call them directly.
 -- Triggers still fire for every role: PostgreSQL does not check EXECUTE when a trigger runs.
-alter function dorly_internal.dorly_problem(text, text, jsonb) owner to postgres;
+-- the earlier 3-argument version (from a previous run of this migration) is no longer used
+drop function if exists dorly_internal.dorly_problem(text, text, jsonb);
+alter function dorly_internal.dorly_problem(text, text, jsonb, text) owner to postgres;
 alter function dorly_internal.dorly_validate() owner to postgres;
 revoke all on function dorly_internal.dorly_validate() from public, anon, authenticated, service_role;
-revoke all on function dorly_internal.dorly_problem(text, text, jsonb) from public, anon, authenticated, service_role;
+revoke all on function dorly_internal.dorly_problem(text, text, jsonb, text) from public, anon, authenticated, service_role;
 
 {triggers}
 
@@ -168,18 +188,21 @@ do $chk$
 declare t text; last_before text;
 begin
   if not exists (select 1 from pg_proc where oid = 'dorly_internal.dorly_validate()'::regprocedure
-                 and prosecdef and proconfig @> array['search_path=pg_catalog, public, dorly_internal']) then
+                 and prosecdef and proconfig @> array['search_path=pg_catalog, pg_temp']) then
     raise exception 'post-check: dorly_validate must be SECURITY DEFINER with a fixed search_path';
   end if;
-  if not exists (select 1 from pg_proc where oid = 'dorly_internal.dorly_problem(text,text,jsonb)'::regprocedure
-                 and not prosecdef and proconfig @> array['search_path=pg_catalog']) then
+  if not exists (select 1 from pg_proc where oid = 'dorly_internal.dorly_problem(text,text,jsonb,text)'::regprocedure
+                 and not prosecdef and proconfig @> array['search_path=pg_catalog, pg_temp']) then
     raise exception 'post-check: dorly_problem must have a fixed search_path';
   end if;
   if has_function_privilege('anon', 'dorly_internal.dorly_validate()', 'execute')
      or has_function_privilege('authenticated', 'dorly_internal.dorly_validate()', 'execute')
-     or has_function_privilege('anon', 'dorly_internal.dorly_problem(text,text,jsonb)', 'execute')
-     or has_function_privilege('authenticated', 'dorly_internal.dorly_problem(text,text,jsonb)', 'execute') then
+     or has_function_privilege('anon', 'dorly_internal.dorly_problem(text,text,jsonb,text)', 'execute')
+     or has_function_privilege('authenticated', 'dorly_internal.dorly_problem(text,text,jsonb,text)', 'execute') then
     raise exception 'post-check: browser roles can still execute the validation functions';
+  end if;
+  if to_regprocedure('dorly_internal.dorly_problem(text,text,jsonb)') is not null then
+    raise exception 'post-check: the old 3-argument dorly_problem still exists';
   end if;
   foreach t in array {tl} loop
     if not exists (select 1 from pg_trigger where tgrelid = ('public.' || t)::regclass and tgname = 'dorly_validate'
@@ -205,11 +228,11 @@ commit;
 
 def check_query():
     sel = []
-    for t in TABLES_ID: sel.append(f"select {q(t)} tbl, id rid, data d from public.{t}")
-    sel.append("select 'dorly_seller_private', seller_id, data from public.dorly_seller_private")
-    sel.append("select 'dorly_listing_private', listing_id, data from public.dorly_listing_private")
-    return ("-- READ-ONLY: evaluates the proposed rules against existing rows. Returns table, id and the first failing rule only.\n"
-            "with r as (\n  " + "\n  union all ".join(sel) + "\n)\nselect tbl, rid, " + problem_expr('d', 'rid', 'tbl') + " as problem from r order by tbl, rid;\n")
+    for t in TABLES_ID: sel.append(f"select {q(t)} tbl, id rid, data d, {'owner::text' if t == 'dorly_listings' else 'null::text'} own from public.{t}")
+    sel.append("select 'dorly_seller_private', seller_id, data, null::text from public.dorly_seller_private")
+    sel.append("select 'dorly_listing_private', listing_id, data, null::text from public.dorly_listing_private")
+    return ("-- READ-ONLY: evaluates the proposed rules against existing rows (media rules for project " + PROJECT_REF + "). Returns table, id and the first failing rule only.\n"
+            "with r as (\n  " + "\n  union all ".join(sel) + "\n)\nselect tbl, rid, " + problem_expr('d', 'rid', 'tbl', 'own') + " as problem from r order by tbl, rid;\n")
 
 def _selfcheck(sql):
     # PostgreSQL regexes allow at most 255 repetitions ({m,n} with n > 255 is an error at run time)

@@ -319,6 +319,8 @@ function admGenOpts(cur){const a=ALL_MODELS.map(m=>[m.g,m.l]);if(cur!=null&&cur!
 function admVarOpts(gen,cur){const mo=modelOf(gen),list=uniq(['',...(mo?mo.v.map(x=>x[0]):ALL_VARIANTS),cur||'']);return list.map(x=>[x,x||'عادي'])}
 function admStoOpts(gen,cur){const mo=modelOf(gen);return uniq([...(mo?mo.s:STORAGES),cur]).sort((a,b)=>stoGB(a)-stoGB(b)).map(x=>[x,x])}
 const ADM_LIM={note:1000};   // parts/defects text, same as the database limit
+// listing price: whole pounds, same range as the publish form, the seller dashboard and the database
+const PRICE={min:1000,max:300000};
 
 function seed(){
  const sellers=[
@@ -392,8 +394,11 @@ const byId=id=>DB.listings.find(l=>l.id===id);
 const condT=k=>(Object.prototype.hasOwnProperty.call(COND,k)?COND[k]:{t:'—'}).t;
 const devHref=id=>'dorly.html#/device/'+encodeURIComponent(String(id));
 const sellerHref=id=>'dorly.html#/seller/'+encodeURIComponent(String(id));
+// images: only Storage files of the Supabase project this page is connected to (Cloud.url), data: images
+// picked on this device, and the bundled catalog pictures (A1: no other project, no other host)
 function safeImg(u){u=String(u==null?'':u);
- if(/^https:\/\/[a-z0-9-]+\.supabase\.co\/storage\/v1\/object\/(public|sign)\/[^"'<>\s\\]+$/i.test(u))return u;
+ const st=(window.Cloud&&Cloud.url?Cloud.url:'')+'/storage/v1/object/';
+ if(st.length>19&&u.startsWith(st)&&/^(public|sign)\/[^"'<>\s\\]+$/.test(u.slice(st.length)))return u;
  if(/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+\/=]+$/i.test(u))return u;
  return ''}
 const dclick=(n,id)=>`data-click="${n}" data-id="${esc(id)}"`;
@@ -475,7 +480,7 @@ function admMarkPaid(id){if(!isAdm())return;const l=byId(id);if(!l||!isUnpaid(l)
 const LST={active:['منشور','ok'],pending:['قيد المراجعة','warn'],paused:['موقوف',''],sold:['اتباع',''],rejected:['مرفوض','']};
 const lstTag=s=>{const x=(Object.prototype.hasOwnProperty.call(LST,s)&&LST[s])||[String(s),''];return `<span class="tag ${x[1]}"${s==='rejected'?' style="background:#fee2e2;color:#b91c1c"':''}>${esc(x[0])}</span>`};
 const fdt=t=>new Date(t).toLocaleString('ar-EG',{timeZone:'Africa/Cairo',dateStyle:'medium',timeStyle:'short'});
-function aud(txt,done){DB.audit=DB.audit||[];DB.audit.unshift({id:'A'+Date.now()+Math.random().toString(36).slice(2,6),t:Date.now(),by:USER?USER.name:'—',txt:String(txt).slice(0,1000)});DB.audit=DB.audit.slice(0,500);const p=save();if(done)p.then(done)}
+function aud(txt,done){DB.audit=DB.audit||[];DB.audit.unshift({id:'A'+Date.now()+Math.random().toString(36).slice(2,6),t:Date.now(),by:USER?USER.name:'—',txt:Array.from(String(txt)).slice(0,1000).join('')});DB.audit=DB.audit.slice(0,500);const p=save();if(done)p.then(done)}
 const pwOk=p=>p.length>=8&&/[A-Za-z]/.test(p)&&/\d/.test(p);
 function refreshDB(){} /* data is loaded from Supabase at start-up and after every failed write */
 
@@ -517,7 +522,7 @@ function admListings(){
  <select onchange="ADM.stp=this.value;$('#adm_tbl').innerHTML=admListTbl()"><option value="all">فرد وتاجر</option><option value="merchant" ${ADM.stp==='merchant'?'selected':''}>تجار</option><option value="individual" ${ADM.stp==='individual'?'selected':''}>أفراد</option></select></div><div id="adm_tbl">${admListTbl()}</div>`;
 }
 function admSetL(id,st){if(!isAdm())return;const l=byId(id);l.status=st;delete l.pausedByAdmin;aud(`${st==='active'?'تفعيل':'إيقاف'} إعلان ${nm(l)} (${id})`);toast('اتحدّثت الحالة');route()}
-function admDelL(id){if(!isAdm())return;const l=byId(id);if(!confirm('تحذف الإعلان ده نهائياً؟'))return;DB.listings=DB.listings.filter(x=>x.id!==id);aud(`حذف إعلان ${nm(l)} (${id})`);toast('اتحذف الإعلان');route()}
+function admDelL(id){if(!isAdm())return;const l=byId(id);if(!confirm('تحذف الإعلان ده نهائياً؟'))return;Cloud.remove('listings',id);DB.listings=DB.listings.filter(x=>x.id!==id);aud(`حذف إعلان ${nm(l)} (${id})`);toast('اتحذف الإعلان');route()}
 function admEdit(id){
  const l=byId(id),opt=(a,v)=>a.map(x=>`<option value="${esc(x[0])}" ${String(x[0])===String(v)?'selected':''}>${esc(x[1])}</option>`).join('');
  openModal(`<h2>تعديل ${esc(nm(l))}</h2><form class="form" ${dsubmit('admEditSave',id)}>
@@ -525,7 +530,7 @@ function admEdit(id){
  <label>الفئة<select id="e_var">${opt(admVarOpts(l.gen,l.variant),l.variant||'')}</select></label>
  <label>السعة<select id="e_sto">${opt(admStoOpts(l.gen,l.storage),l.storage)}</select></label>
  <label>البطارية %<input id="e_bat" type="number" min="0" max="100" required value="${esc(l.battery)}"></label>
- <label>السعر (جنيه)<input id="e_pr" type="number" min="1" required value="${esc(l.price)}"></label>
+ <label>السعر (جنيه)<input id="e_pr" type="number" min="${PRICE.min}" max="${PRICE.max}" step="1" required value="${esc(l.price)}"></label>
  <label>الحالة<select id="e_cond">${opt(Object.keys(COND).map(k=>[k,COND[k].t]),l.cond)}</select></label>
  <label>اللون<select id="e_col">${opt(uniq([...COLORS,l.color]).map(x=>[x,x]),l.color)}</select></label>
  <label>الإصلاحات / القطع المتغيرة<input id="e_parts" value="${esc(l.parts||'')}"></label>
@@ -541,7 +546,7 @@ function admEditGen(id){const g=$('#e_gen').value,v=$('#e_var').value,st=$('#e_s
 let ADM_DRAFT=null,AFTER_RELOAD=null;
 function admEditSave(ev,id){
  ev.preventDefault();if(!isAdm())return;const l=byId(id),pr=+$('#e_pr').value,bt=+$('#e_bat').value,gv=$('#e_gen').value,gen=/^\d+$/.test(gv)?+gv:gv;
- if(!(pr>0)||!Number.isInteger(pr)||pr>1e8){$('#e_err').textContent='اكتب سعر صحيح';return}
+ if(!Number.isInteger(pr)||pr<PRICE.min||pr>PRICE.max){$('#e_err').textContent=`اكتب سعر صحيح بالجنيه من غير كسور (من ${PRICE.min} لـ ${PRICE.max})`;return}
  if(!(bt>=0&&bt<=100)||!Number.isInteger(bt)){$('#e_err').textContent='البطارية من 0 لـ 100';return}
  if(!gv){$('#e_err').textContent='اختار الموديل';return}
  if(!/^\d{1,4}(GB|TB)$/.test($('#e_sto').value)){$('#e_err').textContent='السعة مش صحيحة';return}
