@@ -1,0 +1,5 @@
+# Only the website is published (index.html, dorly.html, admin.html, assets/, vendor/, vercel.json).
+# Database source, proposed SQL, backup/restore procedures, tooling and docs stay in Git but are not served.
+supabase/
+tools/
+docs/
